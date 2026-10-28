@@ -532,6 +532,38 @@ def executar(args):
         ctx.close()
 
 
+def resumo(args):
+    """Último status de cada serviço no log, e quantos concluídos tinham complemento/referência preenchidos."""
+    from collections import Counter
+
+    if not LOG_GRAVACAO.exists():
+        print("Ainda não há log de gravação.")
+        return
+    ultimo = {}
+    with open(LOG_GRAVACAO, encoding="utf-8", newline="") as f:
+        for r in csv.DictReader(f):
+            ultimo[r["id_cliente_servico"]] = r
+    por_status = Counter(r["status"] for r in ultimo.values())
+    print("Último status por serviço:")
+    for st, n in por_status.most_common():
+        print(f"  {st}: {n}")
+    preservados = 0
+    for r in ultimo.values():
+        if r["status"] != "ok":
+            continue
+        antes = json.loads(r["detalhes"] or "{}").get("antes", {})
+        if any(v for k, v in antes.items() if re.search(r"Complemento|Refer[êe]ncia|Condom", k, re.I)):
+            preservados += 1
+    print(f"Concluídos (ok) que tinham complemento/referência/condomínio preenchidos: {preservados}")
+    pendentes = [r for r in ultimo.values() if r["status"] not in FEITOS]
+    if pendentes:
+        with open(LOGS / "pendentes.csv", "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id_cliente_servico", "codigo_cliente", "status", "detalhes"])
+            w.writerows((r["id_cliente_servico"], r["codigo_cliente"], r["status"], r["detalhes"]) for r in pendentes)
+        print(f"{len(pendentes)} serviços para tratar à mão em {LOGS / 'pendentes.csv'}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", help="CSV exportado da planilha (aba filtrada)")
@@ -542,6 +574,8 @@ def main(argv=None):
     ap.add_argument("--coluna-check", default="feito", help="nome da coluna da caixa de seleção (marcado = já feito)")
     ap.add_argument("--listar", type=int, metavar="N",
                     help="lista N clientes elegíveis com um único serviço (bons para teste) e sai")
+    ap.add_argument("--resumo", action="store_true",
+                    help="mostra o total por status do log e grava logs/pendentes.csv (o que precisa de tratamento à mão)")
     ap.add_argument("--exportar-feitos", action="store_true",
                     help="grava logs/ids_feitos.csv com os serviços concluídos (ok/ja_atualizado) e sai")
     ap.add_argument("--tempos", action="store_true", help="mostra quanto tempo levou cada etapa de cada cliente")
@@ -552,6 +586,9 @@ def main(argv=None):
                     help="completa = reabre o endereço e confere número/complemento/referência")
     ap.add_argument("--continuar-no-erro", action="store_true", help="segue após erro inesperado (para após 3 seguidos)")
     args = ap.parse_args(argv)
+    if args.resumo:
+        resumo(args)
+        return
     if args.exportar_feitos:
         feitos = {}
         if LOG_GRAVACAO.exists():
