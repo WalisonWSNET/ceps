@@ -41,6 +41,7 @@ STATUS_CONFIAVEIS = {
     "aprox_exato", "aprox_exato_por_numero", "aprox_exato_por_bairro",
     "conferido_manual",  # linhas dos status duvidosos que você revisou e escolheu o CEP em cep_novo
 }
+ALARMES = ("verificacao_", "restauracao_", "cep_nao_ficou", "botao_", "campo_sumiu", "formulario")  # sinal de problema geral
 FEITOS = {"ok", "ja_atualizado"}  # status que não são refeitos na retomada
 DIALOGO = "md-dialog"  # se a tela usar outro componente, ajustar após --inspecionar
 
@@ -564,7 +565,7 @@ def executar(args):
         page.goto(HUB)
         if "/login" in page.url:
             input("Faça login na janela do navegador (inclusive validações) e tecle ENTER aqui... ")
-        erros_seguidos = 0
+        erros_seguidos = alarmes = sem_feito = 0
         for n, linha in enumerate(fila, 1):
             idcs = so_digitos(linha["id_cliente_servico"])
             try:
@@ -604,6 +605,15 @@ def executar(args):
                   + (f"  | faltam {faltam}" if args.gravar else ""))
             if status == "simulado_ok":
                 print("   antes:", det["antes"], "\n   após trocar o CEP:", det["apos_trocar_cep"])
+            if status in FEITOS:
+                alarmes = sem_feito = 0
+            else:
+                sem_feito += 1
+                alarmes = alarmes + 1 if status.startswith(ALARMES) else alarmes
+            if alarmes >= 2 or sem_feito >= 25:
+                print(f"PARANDO: {alarmes} alertas seguidos / {sem_feito} clientes seguidos sem concluir. "
+                      "Veja o log (--resumo) antes de continuar.")
+                break
             if args.tempos and FASES:
                 print("   tempos:", ", ".join(f"{b[0]} {b[1] - a[1]:.1f}s" for a, b in zip(FASES, FASES[1:])),
                       f"| total {FASES[-1][1] - FASES[0][1]:.1f}s")
