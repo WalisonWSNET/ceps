@@ -141,6 +141,19 @@ def registrar(arquivo, linha, status, detalhes=None):
 
 # ---------------------------------------------------------------- navegação
 
+def escolher_tipo_busca(page):
+    """A consulta abre em 'Nome Cliente': troca para a busca por código do cliente."""
+    page.get_by_label(re.compile(r"Tipo de Busca")).first.click()
+    opcoes = page.get_by_role("option")
+    opcoes.first.wait_for()
+    textos = [t.strip() for t in opcoes.all_inner_texts()]
+    alvo = (next((t for t in textos if re.search(r"c[óo]digo\s*(do\s*)?cliente", t, re.I)), None)
+            or next((t for t in textos if re.search(r"c[óo]digo", t, re.I)), None))
+    if not alvo:
+        raise ErroFatal(f"opção de código não encontrada em Tipo de Busca. Opções: {textos}")
+    opcoes.filter(has_text=alvo).first.click()
+
+
 def abrir_servico(page, linha):
     """Consulta o cliente, abre a lista de serviços e devolve o cartão do serviço certo."""
     from playwright.sync_api import expect  # noqa: F401
@@ -152,6 +165,7 @@ def abrir_servico(page, linha):
     if not consultar.is_visible():
         page.get_by_text("Cliente", exact=True).click()
     consultar.click()
+    escolher_tipo_busca(page)
     page.get_by_role("textbox", name="Consulta *").fill(codigo)
     page.get_by_role("button", name="Consultar").click()
 
