@@ -1,0 +1,9 @@
+# Dados de clientes e logs: nunca versionar (LGPD)
+clientes*.csv
+data/clientes*.csv
+logs/
+*.log
+.venv/
+__pycache__/
+*.pyc
+.env
