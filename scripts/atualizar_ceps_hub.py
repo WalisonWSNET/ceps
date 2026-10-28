@@ -133,6 +133,20 @@ def carregar_feitos():
         return {r["id_cliente_servico"] for r in csv.DictReader(f) if r["status"] in FEITOS}
 
 
+PULADOS = {"servico_nao_encontrado", "numero_divergente", "cep_divergente", "campo_autocompletar_preenchido",
+           "enderecos_diferentes"}  # precisam de tratamento à mão; não repetir a cada rodada
+
+
+def carregar_pulados():
+    if not LOG_GRAVACAO.exists():
+        return set()
+    ultimo = {}
+    with open(LOG_GRAVACAO, encoding="utf-8", newline="") as f:
+        for r in csv.DictReader(f):
+            ultimo[r["id_cliente_servico"]] = r["status"]
+    return {i for i, st in ultimo.items() if st in PULADOS}
+
+
 def registrar(arquivo, linha, status, detalhes=None):
     LOGS.mkdir(exist_ok=True)
     novo = not arquivo.exists()
@@ -251,6 +265,15 @@ def cep_do_cartao(cartao):
     return so_digitos(m.group(2)) if m else None
 
 
+def checar_enderecos_iguais(page):
+    """'Atualizar Todos' copia o endereço editado para todos os tipos: só segue se todos já são iguais."""
+    linhas = page.get_by_role("row").filter(has_text=re.compile(r"CEP:\s*\d"))
+    textos = [re.sub(r"\s+", " ", t).strip() for t in linhas.all_inner_texts()]
+    limpos = {re.sub(r"^(Instala[çc][ãa]o|Cadastral|Cobran[çc]a|Fiscal)\s*", "", t, flags=re.I).strip() for t in textos}
+    if len(limpos) > 1:
+        raise ErroPulavel("enderecos_diferentes:" + " || ".join(sorted(limpos))[:300])
+
+
 def abrir_dialogo_endereco(page, cartao):
     fechar_observacoes(page)
     cartao.get_by_role("button", name="Outras Opções").click()
@@ -258,6 +281,7 @@ def abrir_dialogo_endereco(page, cartao):
     page.get_by_role("button", name="ENDEREÇOS").click()
     linhas = page.get_by_role("row").filter(has_text=re.compile("Cadastral"))
     linhas.first.wait_for()
+    checar_enderecos_iguais(page)
     if linhas.count() != 1:
         raise ErroPulavel(f"linhas_cadastral_{linhas.count()}")
     linhas.get_by_label("Editar").click()
@@ -421,7 +445,7 @@ def processar(page, linha, args, tela):
         raise ErroFatal(f"campos não encontrados na tela: {faltando}. Rode --inspecionar e ajuste PADROES.")
 
     n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
-    if n_hub and n_plan and n_hub != n_plan:
+    if n_hub != n_plan:  # inclui Hub vazio e planilha com número: o endereço Cadastral não é o da instalação
         return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero")}
 
     # campos de autocompletar (ex.: Condomínio) só guardam o valor ao escolher uma opção da lista:
@@ -532,13 +556,16 @@ def executar(args):
         print(f"AVISO: coluna '{args.coluna_check}' não encontrada; linhas já feitas NÃO serão ignoradas. Colunas: {colunas}")
     linhas = selecionar(todas, set(map(so_digitos, args.id)) if args.id else None, args.coluna_check)
     feitos = carregar_feitos()
-    fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos]
+    pulados = set() if (args.refazer_pulados or args.id) else carregar_pulados()
+    fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados]
+    if pulados:
+        print(f"{len(pulados)} serviços pulados em rodadas anteriores ficam de fora (use --refazer-pulados para tentar de novo)")
     if args.inspecionar:
         fila = fila[: args.inspecionar]
     elif not args.todos:
         fila = fila[: args.limite]
     modo = "inspeção" if args.inspecionar else ("GRAVAÇÃO" if args.gravar else "simulação (não grava)")
-    faltam = len([r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos])
+    faltam = len([r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados])
     print(f"Faltam {faltam} de {len(linhas)} serviços elegíveis; {len(fila)} nesta rodada. Modo: {modo}")
     if not fila:
         return
@@ -675,6 +702,8 @@ def main(argv=None):
     ap.add_argument("--tempos", action="store_true", help="mostra quanto tempo levou cada etapa de cada cliente")
     ap.add_argument("--pausa", type=float, nargs=2, default=[0.3, 0.8], metavar=("MIN", "MAX"),
                     help="pausa aleatória entre clientes, em segundos (padrão 0.3 0.8)")
+    ap.add_argument("--refazer-pulados", action="store_true",
+                    help="tenta de novo os serviços que já foram pulados (servico_nao_encontrado, numero_divergente...)")
     ap.add_argument("--id", nargs="+", help="processa só estes id_cliente_servico")
     ap.add_argument("--verificacao", choices=["card", "completa"], default="completa",
                     help="completa = reabre o endereço e confere número/complemento/referência")
