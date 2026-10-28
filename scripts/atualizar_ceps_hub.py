@@ -63,6 +63,13 @@ JS_CAMPOS = r"""el => [...el.querySelectorAll('input, textarea')].map((e, i) => 
 }))"""
 
 
+JS_CAMPOS_PAGINA = r"""() => [...document.querySelectorAll('input, textarea, md-select')]
+  .filter(e => e.offsetWidth || e.offsetHeight)
+  .map(e => ({tag: e.tagName.toLowerCase(), rotulo: (((e.closest('md-input-container') || {}).innerText) || e.getAttribute('aria-label') || e.placeholder || '').trim().replace(/\s+/g, ' ').slice(0, 60), valor: (e.value || '').slice(0, 40)}))"""
+JS_TITULOS = r"""() => [...document.querySelectorAll('md-dialog, [role=dialog], md-toolbar, h1, h2, h3')]
+  .filter(e => e.offsetWidth || e.offsetHeight).map(e => (e.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 80)).slice(0, 15)"""
+
+
 class ErroPulavel(Exception):
     """Problema deste cliente: registra e segue para o próximo."""
 
@@ -322,6 +329,19 @@ def processar(page, linha, args, tela):
     return "ok", detalhes
 
 
+def diagnostico(page):
+    """Lista os campos visíveis da página, para entender onde o robô parou."""
+    try:
+        campos = page.evaluate(JS_CAMPOS_PAGINA)
+        titulos = page.evaluate(JS_TITULOS)
+        print("   campos visíveis na página:")
+        for c in campos[:40]:
+            print("    -", c)
+        print("   textos de títulos/diálogos:", titulos)
+    except Exception as e:  # noqa: BLE001
+        print(f"   diagnóstico falhou: {type(e).__name__}")
+
+
 def executar(args):
     from playwright.sync_api import sync_playwright
 
@@ -370,6 +390,7 @@ def executar(args):
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO inesperado: {type(e).__name__}: {str(e)[:200]}")
                 print(f"   página no momento do erro: {page.url}")
                 print(f"   captura: {tela / (idcs + '_erro.png')}")
+                diagnostico(page)
                 erros_seguidos += 1
                 if not args.continuar_no_erro or erros_seguidos >= 3:
                     print("Parando. Veja logs/telas/ e o log.")
