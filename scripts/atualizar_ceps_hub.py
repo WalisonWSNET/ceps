@@ -319,6 +319,13 @@ def processar(page, linha, args, tela):
     if n_hub and n_plan and n_hub != n_plan:
         return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero")}
 
+    # campos de autocompletar (ex.: Condomínio) só guardam o valor ao escolher uma opção da lista:
+    # se estiverem preenchidos, o robô não consegue recolocá-los com segurança -> deixa para ver à mão
+    auto = {c["rotulo"]: c["valor"].strip() for c in campos
+            if c["tipo"] == "search" and not derivado(c) and c["valor"].strip()}
+    if auto:
+        return "campo_autocompletar_preenchido", auto
+
     guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
 
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
