@@ -341,8 +341,10 @@ def executar(args):
                     page.screenshot(path=str(tela / f"{idcs}_erro.png"))
                 except Exception:  # noqa: BLE001
                     pass
-                registrar(arquivo_log, linha, "erro", {"erro": f"{type(e).__name__}: {str(e)[:300]}"})
+                registrar(arquivo_log, linha, "erro", {"erro": f"{type(e).__name__}: {str(e)[:300]}", "url": page.url})
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO inesperado: {type(e).__name__}: {str(e)[:200]}")
+                print(f"   página no momento do erro: {page.url}")
+                print(f"   captura: {tela / (idcs + '_erro.png')}")
                 erros_seguidos += 1
                 if not args.continuar_no_erro or erros_seguidos >= 3:
                     print("Parando. Veja logs/telas/ e o log.")
@@ -364,11 +366,24 @@ def main(argv=None):
     ap.add_argument("--limite", type=int, default=3, help="máximo de clientes nesta rodada (padrão 3)")
     ap.add_argument("--todos", action="store_true", help="ignora --limite")
     ap.add_argument("--coluna-check", default="check", help="nome da coluna da caixa de seleção (marcado = já feito)")
+    ap.add_argument("--listar", type=int, metavar="N",
+                    help="lista N clientes elegíveis com um único serviço (bons para teste) e sai")
     ap.add_argument("--id", nargs="+", help="processa só estes id_cliente_servico")
     ap.add_argument("--verificacao", choices=["card", "completa"], default="completa",
                     help="completa = reabre o endereço e confere número/complemento/referência")
     ap.add_argument("--continuar-no-erro", action="store_true", help="segue após erro inesperado (para após 3 seguidos)")
     args = ap.parse_args(argv)
+    if args.listar:
+        todas = ler_linhas(args.csv)
+        por_cliente = {}
+        for r in todas:
+            por_cliente[so_digitos(r.get("codigo_cliente"))] = por_cliente.get(so_digitos(r.get("codigo_cliente")), 0) + 1
+        unicos = [r for r in selecionar(todas, None, args.coluna_check)
+                  if por_cliente[so_digitos(r["codigo_cliente"])] == 1]
+        for r in unicos[: args.listar]:
+            print(r["id_cliente_servico"], r["codigo_cliente"], r["endereco"], r["numero"], r["cidade"],
+                  r["cep"], "->", r["cep_novo"])
+        return
     try:
         executar(args)
     except ErroFatal as e:
