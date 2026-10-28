@@ -339,8 +339,8 @@ def executar(args):
                 tela.mkdir(parents=True, exist_ok=True)
                 try:
                     page.screenshot(path=str(tela / f"{idcs}_erro.png"))
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as e2:  # noqa: BLE001
+                    print(f"   não consegui salvar a captura: {type(e2).__name__}: {str(e2)[:150]}")
                 registrar(arquivo_log, linha, "erro", {"erro": f"{type(e).__name__}: {str(e)[:300]}", "url": page.url})
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO inesperado: {type(e).__name__}: {str(e)[:200]}")
                 print(f"   página no momento do erro: {page.url}")
