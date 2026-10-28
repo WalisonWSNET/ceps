@@ -542,6 +542,8 @@ def main(argv=None):
     ap.add_argument("--coluna-check", default="feito", help="nome da coluna da caixa de seleção (marcado = já feito)")
     ap.add_argument("--listar", type=int, metavar="N",
                     help="lista N clientes elegíveis com um único serviço (bons para teste) e sai")
+    ap.add_argument("--exportar-feitos", action="store_true",
+                    help="grava logs/ids_feitos.csv com os serviços concluídos (ok/ja_atualizado) e sai")
     ap.add_argument("--tempos", action="store_true", help="mostra quanto tempo levou cada etapa de cada cliente")
     ap.add_argument("--pausa", type=float, nargs=2, default=[0.3, 0.8], metavar=("MIN", "MAX"),
                     help="pausa aleatória entre clientes, em segundos (padrão 0.3 0.8)")
@@ -550,6 +552,20 @@ def main(argv=None):
                     help="completa = reabre o endereço e confere número/complemento/referência")
     ap.add_argument("--continuar-no-erro", action="store_true", help="segue após erro inesperado (para após 3 seguidos)")
     args = ap.parse_args(argv)
+    if args.exportar_feitos:
+        feitos = {}
+        if LOG_GRAVACAO.exists():
+            with open(LOG_GRAVACAO, encoding="utf-8", newline="") as f:
+                for r in csv.DictReader(f):
+                    if r["status"] in FEITOS:
+                        feitos[r["id_cliente_servico"]] = (r["status"], r["data_hora"])
+        LOGS.mkdir(exist_ok=True)
+        with open(LOGS / "ids_feitos.csv", "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id_cliente_servico", "status", "data_hora"])
+            w.writerows((i, *v) for i, v in sorted(feitos.items()))
+        print(f"{len(feitos)} serviços gravados em {LOGS / 'ids_feitos.csv'}")
+        return
     if args.listar:
         todas = ler_linhas(args.csv)
         por_cliente = {}
