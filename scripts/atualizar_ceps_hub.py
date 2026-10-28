@@ -308,6 +308,13 @@ def preencher(dialogo, campo, valor):
 
 # ---------------------------------------------------------------- fluxo
 
+AVISO_SERVICO = re.compile(r"Servi.o atualizado com sucesso", re.I)
+
+
+def aviso_visivel(page, padrao):
+    return page.get_by_text(padrao).filter(visible=True).count() > 0
+
+
 def clicar_texto(page, padrao, nome):
     """Clica no único botão visível com este texto (o nome acessível dos botões do Hub não é confiável).
     Espera até ~6 s para sobrar só um (um diálogo fechando ainda pode mostrar um segundo botão igual)."""
@@ -331,6 +338,28 @@ def esperar_estabilizar(page, dialogo, minimo_ms=1000, maximo_ms=4000):
         anterior = atual
         if (time.time() - t0) * 1000 >= minimo_ms and estavel >= 2:
             return
+
+
+def gravar_endereco(page):
+    """Atualizar Todos + Salvar, sem esperas à toa. O resultado de verdade é conferido depois, consultando o cliente."""
+    clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
+    page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for()
+    # o aviso do serviço costuma aparecer junto com o dos endereços e sumir logo: olha já
+    aviso_antes = False
+    for _ in range(3):  # ~0,5 s
+        if aviso_visivel(page, AVISO_SERVICO):
+            aviso_antes = True
+            break
+        page.wait_for_timeout(250)
+    clicar_texto(page, r"^\s*Salvar\s*$", "salvar")
+    visto = aviso_antes
+    for _ in range(0 if aviso_antes else 16):  # até ~4 s, só se ainda não vimos
+        if aviso_visivel(page, AVISO_SERVICO):
+            visto = True
+            break
+        page.wait_for_timeout(250)
+    page.wait_for_timeout(1000)
+    return {"servico_antes_do_salvar": aviso_antes, "servico_visto": visto}
 
 
 def trocar_cep(page, dialogo, campos, mapa, novo):
@@ -410,20 +439,7 @@ def processar(page, linha, args, tela):
         page.screenshot(path=str(tela / f"{idcs}_simulacao.png"))
         return "simulado_ok", detalhes  # nada foi gravado; a navegação seguinte descarta o formulário
 
-    clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
-    page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for()
-    clicar_texto(page, r"^\s*Salvar\s*$", "salvar")
-    from playwright.sync_api import TimeoutError as PWTimeout
-
-    try:
-        page.get_by_text(re.compile("Serviço atualizado com sucesso")).wait_for(timeout=10000)
-    except PWTimeout:
-        pass  # o aviso pode sumir rápido; a conferência abaixo confirma o resultado de verdade
-    try:
-        page.wait_for_load_state("networkidle", timeout=2000)
-    except PWTimeout:
-        pass
-    page.wait_for_timeout(800)
+    detalhes["avisos"] = gravar_endereco(page)
     marca("gravar")
 
     # verificação: consulta o cliente de novo (navega do zero) e relê o cartão e (opcional) o endereço
@@ -538,7 +554,10 @@ def executar(args):
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
-            str(PERFIL), channel="chrome", headless=False, viewport={"width": 1366, "height": 900})
+            str(PERFIL), channel="chrome", headless=False, viewport={"width": 1366, "height": 900},
+            # com a tela bloqueada o Chrome trata a janela como oculta e fica bem mais lento
+            args=["--disable-features=CalculateNativeWinOcclusion", "--disable-backgrounding-occluded-windows",
+                  "--disable-renderer-backgrounding", "--disable-background-timer-throttling"])
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.set_default_timeout(20000)
         page.on("dialog", lambda d: d.accept())  # "sair da página?" ao descartar formulário
