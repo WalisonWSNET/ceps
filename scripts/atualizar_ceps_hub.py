@@ -39,6 +39,7 @@ CIDADES = {"ITANHAÉM", "MONGAGUÁ", "PERUÍBE"}
 STATUS_CONFIAVEIS = {
     "exato", "exato_por_bairro", "exato_por_numero", "exato_por_faixa", "exato_por_coordenada",
     "aprox_exato", "aprox_exato_por_numero", "aprox_exato_por_bairro",
+    "conferido_manual",  # linhas dos status duvidosos que você revisou e escolheu o CEP em cep_novo
 }
 FEITOS = {"ok", "ja_atualizado"}  # status que não são refeitos na retomada
 DIALOGO = "md-dialog"  # se a tela usar outro componente, ajustar após --inspecionar
@@ -82,13 +83,24 @@ def ler_linhas(caminho):
         return list(csv.DictReader(f, delimiter=delim))
 
 
-def selecionar(linhas, ids=None):
+VERDADEIRO = {"TRUE", "VERDADEIRO", "SIM", "1", "X"}
+
+
+def marcado(linha, coluna):
+    """Caixa de seleção da planilha marcada = já atualizado no Hub."""
+    chave = next((k for k in linha if k and k.strip().lower() == coluna.lower()), None)
+    return chave is not None and (linha[chave] or "").strip().upper() in VERDADEIRO
+
+
+def selecionar(linhas, ids=None, coluna_check="check"):
     vistos, saida = set(), []
     for r in linhas:
         idcs = so_digitos(r.get("id_cliente_servico"))
         if not idcs or idcs in vistos:
             continue
         if ids and idcs not in ids:
+            continue
+        if marcado(r, coluna_check):
             continue
         if (r.get("status_cep") or "").strip() not in STATUS_CONFIAVEIS:
             continue
@@ -288,7 +300,7 @@ def processar(page, linha, args, tela):
 def executar(args):
     from playwright.sync_api import sync_playwright
 
-    linhas = selecionar(ler_linhas(args.csv), set(map(so_digitos, args.id)) if args.id else None)
+    linhas = selecionar(ler_linhas(args.csv), set(map(so_digitos, args.id)) if args.id else None, args.coluna_check)
     feitos = carregar_feitos()
     fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos]
     if args.inspecionar:
@@ -351,6 +363,7 @@ def main(argv=None):
     ap.add_argument("--gravar", action="store_true", help="grava de verdade (sem isso, só simula)")
     ap.add_argument("--limite", type=int, default=3, help="máximo de clientes nesta rodada (padrão 3)")
     ap.add_argument("--todos", action="store_true", help="ignora --limite")
+    ap.add_argument("--coluna-check", default="check", help="nome da coluna da caixa de seleção (marcado = já feito)")
     ap.add_argument("--id", nargs="+", help="processa só estes id_cliente_servico")
     ap.add_argument("--verificacao", choices=["card", "completa"], default="completa",
                     help="completa = reabre o endereço e confere número/complemento/referência")
