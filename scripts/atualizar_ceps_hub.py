@@ -165,6 +165,13 @@ def escolher_tipo_busca(page):
     opcoes.filter(has_text=alvo).first.click()
 
 
+FASES = []  # (nome, instante) do cliente atual, para --tempos
+
+
+def marca(nome):
+    FASES.append((nome, time.time()))
+
+
 OBSERVACOES_LIDAS = []  # textos das janelas "Observações Obrigatórias" fechadas no cliente atual
 
 
@@ -214,7 +221,7 @@ def abrir_servico(page, linha):
     page.get_by_role("menuitem", name=re.compile("SERVIÇOS")).click()
 
     page.get_by_text(re.compile("ID Cliente Serviço")).first.wait_for()
-    fechar_observacoes(page, espera_ms=2000)  # o aviso costuma aparecer logo após a lista carregar
+    fechar_observacoes(page, espera_ms=1200)  # o aviso costuma aparecer logo após a lista carregar
     cartao = (
         page.locator("div")
         .filter(has_text=re.compile(rf"ID Cliente Serviço:\s*{idcs}(?!\d)"))
@@ -314,6 +321,18 @@ def clicar_texto(page, padrao, nome):
     raise ErroPulavel(f"botao_{nome}_ambiguo_{alvo.count()}")
 
 
+def esperar_estabilizar(page, dialogo, minimo_ms=1000, maximo_ms=4000):
+    """Espera o Hub terminar de reagir ao CEP: pelo menos 1 s e os campos iguais em 2 leituras seguidas."""
+    t0, anterior, estavel = time.time(), None, 0
+    while (time.time() - t0) * 1000 < maximo_ms:
+        page.wait_for_timeout(250)
+        atual = valores(ler_campos(dialogo))
+        estavel = estavel + 1 if atual == anterior else 0
+        anterior = atual
+        if (time.time() - t0) * 1000 >= minimo_ms and estavel >= 2:
+            return
+
+
 def trocar_cep(page, dialogo, campos, mapa, novo):
     """Troca o CEP e recoloca tudo que o Hub apagou. Devolve (guardados, antes, depois, final)."""
     guardar = {c["i"]: c for c in campos if not derivado(c)}  # tudo que o CEP não preenche sozinho
@@ -321,7 +340,7 @@ def trocar_cep(page, dialogo, campos, mapa, novo):
     cep_loc = dialogo.locator("input, textarea").nth(mapa["cep"]["i"])
     cep_loc.fill(novo)
     cep_loc.press("Tab")
-    page.wait_for_timeout(2500)  # o Hub busca o endereço pelo CEP
+    esperar_estabilizar(page, dialogo)  # o Hub busca o endereço pelo CEP
 
     depois_campos = {c["i"]: c for c in ler_campos(dialogo)}
     depois = valores(list(depois_campos.values()))
@@ -330,6 +349,7 @@ def trocar_cep(page, dialogo, campos, mapa, novo):
             raise ErroPulavel(f"campo_sumiu_{c['rotulo']}")
         if depois_campos[i]["valor"].strip() != c["valor"].strip():
             dialogo.locator("input, textarea").nth(i).fill(c["valor"].strip())
+    page.wait_for_timeout(300)  # confirma que o Hub não apaga de novo depois de recolocar
     final_campos = {c["i"]: c for c in ler_campos(dialogo)}
     for i, c in guardar.items():
         if i not in final_campos or final_campos[i]["valor"].strip() != c["valor"].strip():
@@ -344,7 +364,10 @@ def processar(page, linha, args, tela):
     idcs = so_digitos(linha["id_cliente_servico"])
     antigo, novo = so_digitos(linha["cep"]), so_digitos(linha["cep_novo"])
     OBSERVACOES_LIDAS.clear()
+    FASES.clear()
+    marca("inicio")
     cartao = abrir_servico(page, linha)
+    marca("consulta_e_servicos")
 
     atual = cep_do_cartao(cartao)
     if atual == novo:
@@ -355,6 +378,7 @@ def processar(page, linha, args, tela):
     dialogo = abrir_dialogo_endereco(page, cartao)
     campos = ler_campos(dialogo)
     mapa = mapear(campos)
+    marca("abrir_endereco")
     if args.inspecionar:
         tela.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(tela / f"{idcs}_dialogo.png"))
@@ -378,6 +402,7 @@ def processar(page, linha, args, tela):
         return "campo_autocompletar_preenchido", auto
 
     guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
+    marca("trocar_cep")
 
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
     if not args.gravar:
@@ -395,10 +420,11 @@ def processar(page, linha, args, tela):
     except PWTimeout:
         pass  # o aviso pode sumir rápido; a conferência abaixo confirma o resultado de verdade
     try:
-        page.wait_for_load_state("networkidle", timeout=5000)
+        page.wait_for_load_state("networkidle", timeout=2000)
     except PWTimeout:
         pass
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(800)
+    marca("gravar")
 
     # verificação: consulta o cliente de novo (navega do zero) e relê o cartão e (opcional) o endereço
     cartao = abrir_servico(page, linha)
@@ -411,6 +437,7 @@ def processar(page, linha, args, tela):
         for i, c in guardar.items():
             if i not in conf or conf[i]["valor"].strip() != c["valor"].strip():
                 raise ErroPulavel(f"verificacao_{c['rotulo']}_nao_confere")
+    marca("verificacao")
     return "ok", detalhes
 
 
@@ -498,7 +525,10 @@ def executar(args):
             print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else ""))
             if status == "simulado_ok":
                 print("   antes:", det["antes"], "\n   após trocar o CEP:", det["apos_trocar_cep"])
-            time.sleep(random.uniform(1.0, 3.0))
+            if args.tempos and FASES:
+                print("   tempos:", ", ".join(f"{b[0]} {b[1] - a[1]:.1f}s" for a, b in zip(FASES, FASES[1:])),
+                      f"| total {FASES[-1][1] - FASES[0][1]:.1f}s")
+            time.sleep(random.uniform(*args.pausa))
         ctx.close()
 
 
@@ -512,6 +542,9 @@ def main(argv=None):
     ap.add_argument("--coluna-check", default="feito", help="nome da coluna da caixa de seleção (marcado = já feito)")
     ap.add_argument("--listar", type=int, metavar="N",
                     help="lista N clientes elegíveis com um único serviço (bons para teste) e sai")
+    ap.add_argument("--tempos", action="store_true", help="mostra quanto tempo levou cada etapa de cada cliente")
+    ap.add_argument("--pausa", type=float, nargs=2, default=[0.3, 0.8], metavar=("MIN", "MAX"),
+                    help="pausa aleatória entre clientes, em segundos (padrão 0.3 0.8)")
     ap.add_argument("--id", nargs="+", help="processa só estes id_cliente_servico")
     ap.add_argument("--verificacao", choices=["card", "completa"], default="completa",
                     help="completa = reabre o endereço e confere número/complemento/referência")
