@@ -205,10 +205,21 @@ def abrir_dialogo_endereco(page, cartao):
     if linhas.count() != 1:
         raise ErroPulavel(f"linhas_cadastral_{linhas.count()}")
     linhas.get_by_label("Editar").click()
-    dialogo = page.locator(DIALOGO)
-    dialogo = dialogo.last if dialogo.count() else page.locator("body")
-    dialogo.get_by_role("textbox", name=re.compile(PADROES["cep"])).wait_for()
-    return dialogo
+    return achar_formulario(page)
+
+
+def achar_formulario(page):
+    """Formulário 'Endereço de Cliente': o contêiner mais interno com o título e o campo CEP."""
+    cep = page.get_by_role("textbox", name=re.compile(PADROES["cep"]))
+    cep.first.wait_for()
+    if cep.count() != 1:
+        raise ErroPulavel(f"campos_cep_na_tela_{cep.count()}")
+    for base in (page.locator("div").filter(has_text=re.compile(r"Endere[çc]o de Cliente")),
+                 page.locator(DIALOGO)):
+        cont = base.filter(has=cep).last
+        if cont.count():
+            return cont
+    raise ErroFatal("não achei o contêiner do formulário de endereço (rode --inspecionar e me envie a captura)")
 
 
 # ---------------------------------------------------------------- campos
