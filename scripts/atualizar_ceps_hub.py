@@ -388,7 +388,17 @@ def processar(page, linha, args, tela):
     clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
     page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for()
     clicar_texto(page, r"^\s*Salvar\s*$", "salvar")
-    page.get_by_text(re.compile("Serviço atualizado com sucesso")).wait_for()
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    try:
+        page.get_by_text(re.compile("Serviço atualizado com sucesso")).wait_for(timeout=10000)
+    except PWTimeout:
+        pass  # o aviso pode sumir rápido; a conferência abaixo confirma o resultado de verdade
+    try:
+        page.wait_for_load_state("networkidle", timeout=5000)
+    except PWTimeout:
+        pass
+    page.wait_for_timeout(1500)
 
     # verificação: consulta o cliente de novo (navega do zero) e relê o cartão e (opcional) o endereço
     cartao = abrir_servico(page, linha)
@@ -420,7 +430,13 @@ def diagnostico(page):
 def executar(args):
     from playwright.sync_api import sync_playwright
 
-    linhas = selecionar(ler_linhas(args.csv), set(map(so_digitos, args.id)) if args.id else None, args.coluna_check)
+    todas = ler_linhas(args.csv)
+    colunas = list(todas[0].keys()) if todas else []
+    if any(c and c.strip().lower() == args.coluna_check.lower() for c in colunas):
+        print(f"{sum(marcado(r, args.coluna_check) for r in todas)} linhas marcadas em '{args.coluna_check}' (ignoradas)")
+    else:
+        print(f"AVISO: coluna '{args.coluna_check}' não encontrada; linhas já feitas NÃO serão ignoradas. Colunas: {colunas}")
+    linhas = selecionar(todas, set(map(so_digitos, args.id)) if args.id else None, args.coluna_check)
     feitos = carregar_feitos()
     fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos]
     if args.inspecionar:
