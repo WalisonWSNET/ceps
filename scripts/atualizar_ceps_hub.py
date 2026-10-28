@@ -45,16 +45,20 @@ FEITOS = {"ok", "ja_atualizado"}  # status que não são refeitos na retomada
 DIALOGO = "md-dialog"  # se a tela usar outro componente, ajustar após --inspecionar
 
 # Rótulos dos campos na tela de edição do endereço (confirmar com --inspecionar)
-PADROES = {
-    "cep": r"^\s*CEP",
-    "numero": r"^\s*N[úu]mero",
+PADROES = {  # sem \b: o rótulo pode vir com texto de ícone colado antes (ex.: "icon-pinCEP *")
+    "cep": r"CEP",
+    "numero": r"N[úu]mero",
     "complemento": r"Complemento",
     "referencia": r"Refer[êe]ncia",
-    "logradouro": r"Endere[çc]o|Logradouro|Rua",
+    "logradouro": r"Endere[çc]o|Logradouro",
     "bairro": r"Bairro",
     "cidade": r"Cidade|Munic",
+    "estado": r"Estado|\bUF\b",
 }
-PRESERVAR = ("numero", "complemento", "referencia")  # o Hub apaga ao trocar o CEP
+# O CEP preenche sozinho estes campos; todos os OUTROS campos visíveis são guardados e recolocados
+# (o Hub apaga número, complemento, referência etc. ao trocar o CEP).
+DERIVADOS = ("cep", "logradouro", "bairro", "cidade", "estado")
+OBRIGATORIOS = ("cep", "numero", "complemento", "referencia")
 
 JS_CAMPOS = r"""el => [...el.querySelectorAll('input, textarea')].map((e, i) => ({
   i, tipo: e.type, nome: e.name || '',
@@ -216,17 +220,17 @@ def abrir_dialogo_endereco(page, cartao):
 
 
 def achar_formulario(page):
-    """Formulário 'Endereço de Cliente': o contêiner mais interno com o título e o campo CEP."""
-    cep = page.get_by_role("textbox", name=re.compile(PADROES["cep"]))
-    cep.first.wait_for()
-    if cep.count() != 1:
-        raise ErroPulavel(f"campos_cep_na_tela_{cep.count()}")
-    for base in (page.locator("div").filter(has_text=re.compile(r"Endere[çc]o de Cliente")),
-                 page.locator(DIALOGO)):
-        cont = base.filter(has=cep).last
-        if cont.count():
+    """Formulário 'Endereço de Cliente': o contêiner mais interno com o título e campos de texto."""
+    base = (page.locator("div").filter(has_text=re.compile(r"Endere[çc]o de Cliente"))
+            .filter(has=page.locator("input")))
+    base.first.wait_for()
+    cont = base.last
+    for _ in range(40):  # até ~12 s para os campos carregarem
+        if "cep" in mapear(ler_campos(cont)):
             return cont
-    raise ErroFatal("não achei o contêiner do formulário de endereço (rode --inspecionar e me envie a captura)")
+        page.wait_for_timeout(300)
+    rotulos = [c["rotulo"] for c in ler_campos(cont)]
+    raise ErroFatal(f"formulário de endereço aberto, mas sem campo CEP reconhecido. Rótulos vistos: {rotulos}")
 
 
 # ---------------------------------------------------------------- campos
@@ -246,8 +250,12 @@ def mapear(campos):
     return achados
 
 
+def derivado(campo):
+    return any(re.search(PADROES[k], campo["rotulo"], re.I) for k in DERIVADOS)
+
+
 def valores(campos):
-    return {k: c["valor"].strip() for k, c in mapear(campos).items()}
+    return {c["rotulo"] or f"campo_{c['i']}": c["valor"].strip() for c in campos}
 
 
 def preencher(dialogo, campo, valor):
@@ -255,6 +263,32 @@ def preencher(dialogo, campo, valor):
 
 
 # ---------------------------------------------------------------- fluxo
+
+def trocar_cep(page, dialogo, campos, mapa, novo):
+    """Troca o CEP e recoloca tudo que o Hub apagou. Devolve (guardados, antes, depois, final)."""
+    guardar = {c["i"]: c for c in campos if not derivado(c)}  # tudo que o CEP não preenche sozinho
+    antes = valores(campos)
+    cep_loc = dialogo.locator("input, textarea").nth(mapa["cep"]["i"])
+    cep_loc.fill(novo)
+    cep_loc.press("Tab")
+    page.wait_for_timeout(2500)  # o Hub busca o endereço pelo CEP
+
+    depois_campos = {c["i"]: c for c in ler_campos(dialogo)}
+    depois = valores(list(depois_campos.values()))
+    for i, c in guardar.items():
+        if i not in depois_campos:
+            raise ErroPulavel(f"campo_sumiu_{c['rotulo']}")
+        if depois_campos[i]["valor"].strip() != c["valor"].strip():
+            dialogo.locator("input, textarea").nth(i).fill(c["valor"].strip())
+    final_campos = {c["i"]: c for c in ler_campos(dialogo)}
+    for i, c in guardar.items():
+        if i not in final_campos or final_campos[i]["valor"].strip() != c["valor"].strip():
+            raise ErroPulavel(f"restauracao_falhou_{c['rotulo']}")
+    if so_digitos(final_campos[mapa["cep"]["i"]]["valor"]) != novo:
+        raise ErroPulavel("cep_nao_ficou_no_campo")
+    return guardar, antes, depois, valores(list(final_campos.values()))
+
+
 
 def processar(page, linha, args, tela):
     idcs = so_digitos(linha["id_cliente_servico"])
@@ -277,30 +311,15 @@ def processar(page, linha, args, tela):
         print("Campos reconhecidos:", {k: v["rotulo"] for k, v in mapa.items()})
         return "inspecionado", {"campos": campos}
 
-    faltando = [k for k in ("cep",) + PRESERVAR if k not in mapa]
+    faltando = [k for k in OBRIGATORIOS if k not in mapa]
     if faltando:
         raise ErroFatal(f"campos não encontrados na tela: {faltando}. Rode --inspecionar e ajuste PADROES.")
 
-    antes = valores(campos)
-    n_hub, n_plan = so_digitos(antes.get("numero")), so_digitos(linha.get("numero"))
+    n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
     if n_hub and n_plan and n_hub != n_plan:
-        return "numero_divergente", {"numero_hub": antes.get("numero"), "numero_planilha": linha.get("numero")}
+        return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero")}
 
-    cep_loc = dialogo.locator("input, textarea").nth(mapa["cep"]["i"])
-    cep_loc.fill(novo)
-    cep_loc.press("Tab")
-    page.wait_for_timeout(2500)  # o Hub busca o endereço pelo CEP
-
-    depois = valores(ler_campos(dialogo))
-    for chave in PRESERVAR:
-        if depois.get(chave, "") != antes.get(chave, ""):
-            preencher(dialogo, mapear(ler_campos(dialogo))[chave], antes.get(chave, ""))
-    final = valores(ler_campos(dialogo))
-    for chave in PRESERVAR:
-        if final.get(chave, "") != antes.get(chave, ""):
-            raise ErroPulavel(f"restauracao_falhou_{chave}")
-    if so_digitos(final.get("cep")) != novo:
-        raise ErroPulavel("cep_nao_ficou_no_campo")
+    guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
 
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
     if not args.gravar:
@@ -308,7 +327,7 @@ def processar(page, linha, args, tela):
         page.screenshot(path=str(tela / f"{idcs}_simulacao.png"))
         return "simulado_ok", detalhes  # nada foi gravado; a navegação seguinte descarta o formulário
 
-    dialogo.get_by_role("button", name="Atualizar Todos").click()
+    page.get_by_role("button", name=re.compile("Atualizar Todos", re.I)).click()
     page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for()
     page.get_by_role("button", name="Salvar").click()
     page.get_by_text(re.compile("Serviço atualizado com sucesso")).wait_for()
@@ -321,11 +340,11 @@ def processar(page, linha, args, tela):
         raise ErroPulavel("verificacao_cep_nao_confere")
     if args.verificacao == "completa":
         dialogo = abrir_dialogo_endereco(page, cartao)
-        conferido = valores(ler_campos(dialogo))
-        detalhes["conferido"] = conferido
-        for chave in PRESERVAR:
-            if conferido.get(chave, "") != antes.get(chave, ""):
-                raise ErroPulavel(f"verificacao_{chave}_nao_confere")
+        conf = {c["i"]: c for c in ler_campos(dialogo)}
+        detalhes["conferido"] = valores(list(conf.values()))
+        for i, c in guardar.items():
+            if i not in conf or conf[i]["valor"].strip() != c["valor"].strip():
+                raise ErroPulavel(f"verificacao_{c['rotulo']}_nao_confere")
     return "ok", detalhes
 
 
