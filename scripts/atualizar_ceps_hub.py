@@ -193,8 +193,13 @@ def abrir_servico(page, linha):
         .filter(has_text=re.compile(rf"ID Cliente Serviço:\s*{idcs}(?!\d)"))
         .filter(has=page.get_by_role("button", name="Outras Opções"))
     )
-    if cartao.count() == 0:
-        raise ErroPulavel("servico_nao_encontrado")
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    try:
+        cartao.first.wait_for(state="attached", timeout=12000)  # os cartões carregam aos poucos
+    except PWTimeout:
+        ids = re.findall(r"ID Cliente Serviço:\s*(\d+)", page.inner_text("body"))
+        raise ErroPulavel("servico_nao_encontrado:ids_na_tela=" + ",".join(ids[:10]))
     cartao = cartao.last  # o contêiner mais interno que tem o ID e o botão
     if cartao.get_by_role("button", name="Outras Opções").count() != 1:
         raise ErroPulavel("cartao_ambiguo")
@@ -263,6 +268,19 @@ def preencher(dialogo, campo, valor):
 
 
 # ---------------------------------------------------------------- fluxo
+
+def clicar_texto(page, padrao, nome):
+    """Clica no único botão visível com este texto (o nome acessível dos botões do Hub não é confiável).
+    Espera até ~6 s para sobrar só um (um diálogo fechando ainda pode mostrar um segundo botão igual)."""
+    alvo = page.get_by_text(re.compile(padrao, re.I)).filter(visible=True)
+    alvo.first.wait_for()
+    for _ in range(20):
+        if alvo.count() == 1:
+            alvo.click()
+            return
+        page.wait_for_timeout(300)
+    raise ErroPulavel(f"botao_{nome}_ambiguo_{alvo.count()}")
+
 
 def trocar_cep(page, dialogo, campos, mapa, novo):
     """Troca o CEP e recoloca tudo que o Hub apagou. Devolve (guardados, antes, depois, final)."""
@@ -334,14 +352,12 @@ def processar(page, linha, args, tela):
         page.screenshot(path=str(tela / f"{idcs}_simulacao.png"))
         return "simulado_ok", detalhes  # nada foi gravado; a navegação seguinte descarta o formulário
 
-    page.get_by_role("button", name=re.compile("Atualizar Todos", re.I)).click()
+    clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
     page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for()
-    page.get_by_role("button", name="Salvar").click()
+    clicar_texto(page, r"^\s*Salvar\s*$", "salvar")
     page.get_by_text(re.compile("Serviço atualizado com sucesso")).wait_for()
-    page.get_by_role("button", name="Close dialog").click()
 
-    # verificação: relê o cartão e (opcional) o diálogo
-    page.reload()
+    # verificação: consulta o cliente de novo (navega do zero) e relê o cartão e (opcional) o endereço
     cartao = abrir_servico(page, linha)
     if cep_do_cartao(cartao) != novo:
         raise ErroPulavel("verificacao_cep_nao_confere")
@@ -401,7 +417,8 @@ def executar(args):
                 status, det = processar(page, linha, args, tela)
                 erros_seguidos = 0
             except ErroPulavel as e:
-                status, det = str(e), {}
+                status, _, info = str(e).partition(":")
+                det = {"info": info} if info else {}
             except ErroFatal as e:
                 registrar(arquivo_log, linha, "erro_fatal", {"erro": str(e)})
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO FATAL: {e}")
@@ -409,13 +426,13 @@ def executar(args):
             except Exception as e:  # noqa: BLE001 - qualquer erro inesperado
                 tela.mkdir(parents=True, exist_ok=True)
                 try:
-                    page.screenshot(path=str(tela / f"{idcs}_erro.png"))
+                    page.screenshot(path=str(tela / f"{idcs}_erro_{datetime.now():%H%M%S}.png"))
                 except Exception as e2:  # noqa: BLE001
                     print(f"   não consegui salvar a captura: {type(e2).__name__}: {str(e2)[:150]}")
                 registrar(arquivo_log, linha, "erro", {"erro": f"{type(e).__name__}: {str(e)[:300]}", "url": page.url})
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO inesperado: {type(e).__name__}: {str(e)[:200]}")
                 print(f"   página no momento do erro: {page.url}")
-                print(f"   captura: {tela / (idcs + '_erro.png')}")
+                print(f"   captura: {tela}  (arquivo {idcs}_erro_HHMMSS.png)")
                 diagnostico(page)
                 erros_seguidos += 1
                 if not args.continuar_no_erro or erros_seguidos >= 3:
@@ -423,7 +440,7 @@ def executar(args):
                     break
                 continue
             registrar(arquivo_log, linha, status, det)
-            print(f"[{n}/{len(fila)}] {idcs}: {status}")
+            print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else ""))
             if status == "simulado_ok":
                 print("   antes:", det["antes"], "\n   após trocar o CEP:", det["apos_trocar_cep"])
             time.sleep(random.uniform(1.0, 3.0))
