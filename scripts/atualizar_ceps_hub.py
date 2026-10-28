@@ -165,6 +165,31 @@ def escolher_tipo_busca(page):
     opcoes.filter(has_text=alvo).first.click()
 
 
+OBSERVACOES_LIDAS = []  # textos das janelas "Observações Obrigatórias" fechadas no cliente atual
+
+
+def fechar_observacoes(page, espera_ms=0):
+    """Clica em OK na janela 'Observações Obrigatórias' (pode haver mais de uma) e guarda o texto lido."""
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    padrao = re.compile(r"Observações Obrigatórias", re.I)
+    titulo = page.get_by_text(padrao).filter(visible=True)
+    for _ in range(5):
+        try:
+            titulo.first.wait_for(state="visible", timeout=max(espera_ms, 200))
+        except PWTimeout:
+            return
+        caixa = page.locator("md-dialog").filter(has_text=padrao)
+        if not caixa.count():
+            caixa = (page.locator("div").filter(has_text=padrao)
+                     .filter(has=page.get_by_text(re.compile(r"^\s*OK\s*$"))))
+        caixa = caixa.last
+        OBSERVACOES_LIDAS.append(re.sub(r"\s+", " ", caixa.inner_text())[:300])
+        caixa.get_by_text(re.compile(r"^\s*OK\s*$")).filter(visible=True).first.click()
+        page.wait_for_timeout(500)
+        espera_ms = 0  # as próximas só se já estiverem na tela
+
+
 def abrir_servico(page, linha):
     """Consulta o cliente, abre a lista de serviços e devolve o cartão do serviço certo."""
     from playwright.sync_api import expect  # noqa: F401
@@ -184,10 +209,12 @@ def abrir_servico(page, linha):
     menus.first.wait_for()
     if menus.count() != 1:
         raise ErroPulavel(f"consulta_retornou_{menus.count()}_clientes")
+    fechar_observacoes(page)
     menus.get_by_label("Abrir menu").click()
     page.get_by_role("menuitem", name=re.compile("SERVIÇOS")).click()
 
     page.get_by_text(re.compile("ID Cliente Serviço")).first.wait_for()
+    fechar_observacoes(page, espera_ms=2000)  # o aviso costuma aparecer logo após a lista carregar
     cartao = (
         page.locator("div")
         .filter(has_text=re.compile(rf"ID Cliente Serviço:\s*{idcs}(?!\d)"))
@@ -195,11 +222,15 @@ def abrir_servico(page, linha):
     )
     from playwright.sync_api import TimeoutError as PWTimeout
 
-    try:
-        cartao.first.wait_for(state="attached", timeout=12000)  # os cartões carregam aos poucos
-    except PWTimeout:
-        ids = re.findall(r"ID Cliente Serviço:\s*(\d+)", page.inner_text("body"))
-        raise ErroPulavel("servico_nao_encontrado:ids_na_tela=" + ",".join(ids[:10]))
+    for tentativa in range(12):
+        fechar_observacoes(page)
+        try:
+            cartao.first.wait_for(state="attached", timeout=1000)  # os cartões carregam aos poucos
+            break
+        except PWTimeout:
+            if tentativa == 11:
+                ids = re.findall(r"ID Cliente Serviço:\s*(\d+)", page.inner_text("body"))
+                raise ErroPulavel("servico_nao_encontrado:ids_na_tela=" + ",".join(ids[:10]))
     cartao = cartao.last  # o contêiner mais interno que tem o ID e o botão
     if cartao.get_by_role("button", name="Outras Opções").count() != 1:
         raise ErroPulavel("cartao_ambiguo")
@@ -213,6 +244,7 @@ def cep_do_cartao(cartao):
 
 
 def abrir_dialogo_endereco(page, cartao):
+    fechar_observacoes(page)
     cartao.get_by_role("button", name="Outras Opções").click()
     page.get_by_role("menuitem", name="Editar").click()
     page.get_by_role("button", name="ENDEREÇOS").click()
@@ -311,6 +343,7 @@ def trocar_cep(page, dialogo, campos, mapa, novo):
 def processar(page, linha, args, tela):
     idcs = so_digitos(linha["id_cliente_servico"])
     antigo, novo = so_digitos(linha["cep"]), so_digitos(linha["cep_novo"])
+    OBSERVACOES_LIDAS.clear()
     cartao = abrir_servico(page, linha)
 
     atual = cep_do_cartao(cartao)
@@ -439,6 +472,8 @@ def executar(args):
                     print("Parando. Veja logs/telas/ e o log.")
                     break
                 continue
+            if OBSERVACOES_LIDAS:
+                det = dict(det, observacoes_lidas=list(OBSERVACOES_LIDAS))
             registrar(arquivo_log, linha, status, det)
             print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else ""))
             if status == "simulado_ok":
