@@ -454,6 +454,52 @@ def diagnostico(page):
         print(f"   diagnóstico falhou: {type(e).__name__}")
 
 
+class MarcadorPlanilha:
+    """Marca TRUE na coluna 'feito' da planilha (Google Sheets) para cada serviço concluído.
+    Só escreve nessa coluna. Reencontra a linha pelo id_cliente_servico a cada envio (aguenta reordenação)."""
+
+    def __init__(self, planilha_id, credenciais, coluna, aba=None):
+        import gspread
+
+        sh = gspread.service_account(filename=credenciais).open_by_key(planilha_id)
+        self.ws = None
+        for ws in ([sh.worksheet(aba)] if aba else sh.worksheets()):
+            cab = [c.strip().lower() for c in ws.row_values(1)]
+            if "id_cliente_servico" in cab and coluna.lower() in cab:
+                self.ws, self.col_id, self.col_feito = ws, cab.index("id_cliente_servico") + 1, cab.index(coluna.lower()) + 1
+                break
+        if self.ws is None:
+            raise ErroFatal(f"não achei uma aba com as colunas id_cliente_servico e {coluna} (use --aba NOME)")
+        self.pendentes = []
+
+    def marcar(self, idcs):
+        self.pendentes.append(idcs)
+        if len(self.pendentes) >= 10:
+            self.enviar()
+
+    def enviar(self):
+        from gspread.utils import rowcol_to_a1
+
+        if not self.pendentes:
+            return
+        try:
+            ids = [so_digitos(x) for x in self.ws.col_values(self.col_id)]
+            linha_de = {i: n for n, i in enumerate(ids, 1) if i}
+            dados, sem_linha = [], []
+            for idcs in self.pendentes:
+                if idcs in linha_de:
+                    dados.append({"range": rowcol_to_a1(linha_de[idcs], self.col_feito), "values": [[True]]})
+                else:
+                    sem_linha.append(idcs)
+            for i in range(0, len(dados), 500):
+                self.ws.batch_update(dados[i:i + 500], value_input_option="USER_ENTERED")
+            if sem_linha:
+                print("   não achei na planilha:", sem_linha)
+            self.pendentes.clear()
+        except Exception as e:  # noqa: BLE001 - falha da planilha não pode parar o robô
+            print(f"   AVISO: não consegui marcar a planilha agora ({type(e).__name__}: {str(e)[:120]}); tento no próximo envio")
+
+
 def executar(args):
     from playwright.sync_api import sync_playwright
 
@@ -475,10 +521,19 @@ def executar(args):
     elif not args.todos:
         fila = fila[: args.limite]
     modo = "inspeção" if args.inspecionar else ("GRAVAÇÃO" if args.gravar else "simulação (não grava)")
-    print(f"{len(linhas)} linhas elegíveis, {len(feitos)} já feitas, {len(fila)} nesta rodada. Modo: {modo}")
+    faltam = len([r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos])
+    print(f"Faltam {faltam} de {len(linhas)} serviços elegíveis; {len(fila)} nesta rodada. Modo: {modo}")
     if not fila:
         return
     arquivo_log = LOG_GRAVACAO if args.gravar else LOG_SIMULACAO
+    marcador = None
+    if args.planilha and args.gravar:
+        marcador = MarcadorPlanilha(args.planilha, args.credenciais, args.coluna_check, args.aba)
+        marcador.pendentes.extend(sorted(feitos))  # recupera o que o log já tem e a planilha ainda não
+        marcador.enviar()
+        import atexit
+
+        atexit.register(marcador.enviar)  # também no Ctrl+C
     tela = LOGS / "telas"
 
     with sync_playwright() as p:
@@ -522,13 +577,20 @@ def executar(args):
             if OBSERVACOES_LIDAS:
                 det = dict(det, observacoes_lidas=list(OBSERVACOES_LIDAS))
             registrar(arquivo_log, linha, status, det)
-            print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else ""))
+            if args.gravar and status in FEITOS:
+                faltam -= 1
+                if marcador:
+                    marcador.marcar(idcs)
+            print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else "")
+                  + (f"  | faltam {faltam}" if args.gravar else ""))
             if status == "simulado_ok":
                 print("   antes:", det["antes"], "\n   após trocar o CEP:", det["apos_trocar_cep"])
             if args.tempos and FASES:
                 print("   tempos:", ", ".join(f"{b[0]} {b[1] - a[1]:.1f}s" for a, b in zip(FASES, FASES[1:])),
                       f"| total {FASES[-1][1] - FASES[0][1]:.1f}s")
             time.sleep(random.uniform(*args.pausa))
+        if marcador:
+            marcador.enviar()
         ctx.close()
 
 
@@ -574,6 +636,9 @@ def main(argv=None):
     ap.add_argument("--coluna-check", default="feito", help="nome da coluna da caixa de seleção (marcado = já feito)")
     ap.add_argument("--listar", type=int, metavar="N",
                     help="lista N clientes elegíveis com um único serviço (bons para teste) e sai")
+    ap.add_argument("--planilha", metavar="ID", help="ID da planilha Google: o robô marca TRUE na coluna 'feito' a cada serviço concluído")
+    ap.add_argument("--credenciais", default="credenciais_google.json", help="JSON da conta de serviço do Google")
+    ap.add_argument("--aba", help="nome da aba da planilha (se omitido, acha pela coluna id_cliente_servico)")
     ap.add_argument("--resumo", action="store_true",
                     help="mostra o total por status do log e grava logs/pendentes.csv (o que precisa de tratamento à mão)")
     ap.add_argument("--exportar-feitos", action="store_true",

@@ -11,3 +11,7 @@ __pycache__/
 # Sessão/perfil do navegador do robô (contêm cookies de login)
 auth.json
 .perfil/
+
+# Credenciais do Google (conta de serviço): nunca versionar
+credenciais*.json
+*.json
