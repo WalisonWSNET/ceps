@@ -103,7 +103,7 @@ def marcado(linha, coluna):
     return chave is not None and (linha[chave] or "").strip().upper() in VERDADEIRO
 
 
-def selecionar(linhas, ids=None, coluna_check="check"):
+def selecionar(linhas, ids=None, coluna_check="feito"):
     vistos, saida = set(), []
     for r in linhas:
         idcs = so_digitos(r.get("id_cliente_servico"))
@@ -433,7 +433,11 @@ def executar(args):
     todas = ler_linhas(args.csv)
     colunas = list(todas[0].keys()) if todas else []
     if any(c and c.strip().lower() == args.coluna_check.lower() for c in colunas):
-        print(f"{sum(marcado(r, args.coluna_check) for r in todas)} linhas marcadas em '{args.coluna_check}' (ignoradas)")
+        n_marcadas = sum(marcado(r, args.coluna_check) for r in todas)
+        print(f"{n_marcadas} linhas marcadas em '{args.coluna_check}' (ignoradas)")
+        if not n_marcadas:
+            chave = next(c for c in colunas if c and c.strip().lower() == args.coluna_check.lower())
+            print(f"   valores vistos na coluna: {sorted({(r[chave] or '').strip() for r in todas})[:5]}")
     else:
         print(f"AVISO: coluna '{args.coluna_check}' não encontrada; linhas já feitas NÃO serão ignoradas. Colunas: {colunas}")
     linhas = selecionar(todas, set(map(so_digitos, args.id)) if args.id else None, args.coluna_check)
@@ -505,7 +509,7 @@ def main(argv=None):
     ap.add_argument("--gravar", action="store_true", help="grava de verdade (sem isso, só simula)")
     ap.add_argument("--limite", type=int, default=3, help="máximo de clientes nesta rodada (padrão 3)")
     ap.add_argument("--todos", action="store_true", help="ignora --limite")
-    ap.add_argument("--coluna-check", default="check", help="nome da coluna da caixa de seleção (marcado = já feito)")
+    ap.add_argument("--coluna-check", default="feito", help="nome da coluna da caixa de seleção (marcado = já feito)")
     ap.add_argument("--listar", type=int, metavar="N",
                     help="lista N clientes elegíveis com um único serviço (bons para teste) e sai")
     ap.add_argument("--id", nargs="+", help="processa só estes id_cliente_servico")
