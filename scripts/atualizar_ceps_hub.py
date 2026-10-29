@@ -339,13 +339,21 @@ def botoes_do_painel(dlg):
 
 JS_FECHAR = r"""el => {
   const vis = e => !!(e.offsetWidth || e.offsetHeight);
-  for (const s of ["[aria-label*='close' i]", "[aria-label*='fechar' i]", "[title*='close' i]", "[title*='fechar' i]"]) {
-    const xs = [...el.querySelectorAll(s)].filter(vis);
-    if (xs.length) { xs[xs.length - 1].click(); return s; }
+  const re = /Endere[çc]o de Cliente/i;
+  const tits = [...el.querySelectorAll('*')].filter(e => vis(e) && re.test(e.textContent || '') && (e.textContent || '').trim().length < 60);
+  const tit = tits.find(e => ![...e.children].some(c => tits.includes(c)));   // o menor elemento com o título do painel
+  if (!tit) return null;
+  const fechaveis = a => {
+    const xs = [];
+    for (const s of ["[aria-label*='close' i]", "[aria-label*='fechar' i]", "[title*='close' i]", "[title*='fechar' i]"]) xs.push(...a.querySelectorAll(s));
+    xs.push(...[...a.querySelectorAll('button, [role=button], md-icon, a')].filter(e => /^\s*(close|clear)\s*$/i.test(e.innerText || '')));
+    return xs.filter(vis);
+  };
+  let a = tit;
+  for (let i = 0; i < 4 && a; i++, a = a.parentElement) {   // só a barra de título do painel: sobe poucos níveis
+    const xs = fechaveis(a);
+    if (xs.length) { xs[xs.length - 1].click(); return a.tagName.toLowerCase() + ':' + i; }
   }
-  const icones = [...el.querySelectorAll('button, [role=button], md-icon, a')]
-      .filter(e => vis(e) && /^\s*(close|clear)\s*$/i.test(e.innerText || ''));
-  if (icones.length) { icones[icones.length - 1].click(); return 'icone'; }
   return null;
 }"""
 
