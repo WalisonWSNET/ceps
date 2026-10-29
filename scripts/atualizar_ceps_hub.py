@@ -652,11 +652,34 @@ def diagnostico(page):
         print(f"   diagnóstico falhou: {type(e).__name__}")
 
 
-class MarcadorPlanilha:
-    """Marca TRUE na coluna 'feito' da planilha (Google Sheets) para cada serviço concluído.
-    Só escreve nessa coluna. Reencontra a linha pelo id_cliente_servico a cada envio (aguenta reordenação)."""
+def texto_observacao(status, det):
+    """Texto curto para a coluna de observações da planilha ('' = nada a anotar)."""
+    if status in FEITOS or status == "confere":
+        conflitos = (det.get("mesclado") or {}).get("_conflitos")
+        if conflitos:
+            return "deixado em branco por conflito: " + "; ".join(f"{k}: {' | '.join(v)}" for k, v in conflitos.items())
+        return ""
+    if status == "bairro_longe":
+        info = f"{det['bairro'][0]} -> {det['bairro'][1]} ({det.get('bairro_km')} km)"
+    elif status == "numero_divergente":
+        info = f"Hub {det.get('numero_hub')!r} x planilha {det.get('numero_planilha')!r}"
+    elif status in ("cep_divergente", "cep_formulario_divergente"):
+        info = f"Hub {det.get('cep_cartao') or det.get('cep_formulario')} x planilha {det.get('cep_planilha')}"
+    elif status == "cep_diferente":
+        info = f"marcado como feito, mas o Hub mostra {det.get('cep_hub')} (planilha: {det.get('cep_planilha')})"
+    elif status == "campo_autocompletar_preenchido":
+        info = ", ".join(f"{k}: {v}" for k, v in det.items())
+    else:
+        info = det.get("info", "")
+    return (f"{status}: {info}" if info else status)[:300]
 
-    def __init__(self, planilha_id, credenciais, coluna, aba=None):
+
+class MarcadorPlanilha:
+    """Escreve na planilha (Google Sheets): TRUE na coluna 'feito' e observações na coluna 'obs_robo'
+    (criada no fim do cabeçalho se não existir). Não toca em nenhuma outra coluna.
+    Reencontra a linha pelo id_cliente_servico a cada envio (aguenta reordenação)."""
+
+    def __init__(self, planilha_id, credenciais, coluna, aba=None, coluna_obs="obs_robo"):
         import gspread
 
         sh = gspread.service_account(filename=credenciais).open_by_key(planilha_id)
@@ -665,22 +688,38 @@ class MarcadorPlanilha:
             cab = [c.strip().lower() for c in ws.row_values(1)]
             if "id_cliente_servico" in cab and coluna.lower() in cab:
                 self.ws, self.col_id, self.col_feito = ws, cab.index("id_cliente_servico") + 1, cab.index(coluna.lower()) + 1
+                self.n_cab = len(cab)
+                self.coluna_obs = coluna_obs
+                self.col_obs = cab.index(coluna_obs.lower()) + 1 if coluna_obs.lower() in cab else None
                 break
         if self.ws is None:
             raise ErroFatal(f"não achei uma aba com as colunas id_cliente_servico e {coluna} (use --aba NOME)")
-        self.pendentes = []
+        self.pendentes, self.obs = [], {}
 
     def marcar(self, idcs):
         self.pendentes.append(idcs)
-        if len(self.pendentes) >= 10:
+        self._talvez_enviar()
+
+    def observar(self, idcs, texto):
+        if texto:
+            self.obs[idcs] = texto
+            self._talvez_enviar()
+
+    def _talvez_enviar(self):
+        if len(self.pendentes) + len(self.obs) >= 10:
             self.enviar()
 
     def enviar(self):
         from gspread.utils import rowcol_to_a1
 
-        if not self.pendentes:
+        if not self.pendentes and not self.obs:
             return
         try:
+            if self.obs and self.col_obs is None:  # cria a coluna de observações no fim do cabeçalho
+                self.col_obs = self.n_cab + 1
+                if self.col_obs > self.ws.col_count:
+                    self.ws.add_cols(self.col_obs - self.ws.col_count)
+                self.ws.update_cell(1, self.col_obs, self.coluna_obs)
             ids = [so_digitos(x) for x in self.ws.col_values(self.col_id)]
             linha_de = {i: n for n, i in enumerate(ids, 1) if i}
             dados, sem_linha = [], []
@@ -689,13 +728,40 @@ class MarcadorPlanilha:
                     dados.append({"range": rowcol_to_a1(linha_de[idcs], self.col_feito), "values": [[True]]})
                 else:
                     sem_linha.append(idcs)
+            for idcs, texto in self.obs.items():
+                if idcs in linha_de:
+                    dados.append({"range": rowcol_to_a1(linha_de[idcs], self.col_obs), "values": [[texto]]})
+                else:
+                    sem_linha.append(idcs)
             for i in range(0, len(dados), 500):
                 self.ws.batch_update(dados[i:i + 500], value_input_option="USER_ENTERED")
             if sem_linha:
-                print("   não achei na planilha:", sem_linha)
+                print("   não achei na planilha:", sorted(set(sem_linha)))
             self.pendentes.clear()
+            self.obs.clear()
         except Exception as e:  # noqa: BLE001 - falha da planilha não pode parar o robô
-            print(f"   AVISO: não consegui marcar a planilha agora ({type(e).__name__}: {str(e)[:120]}); tento no próximo envio")
+            print(f"   AVISO: não consegui escrever na planilha agora ({type(e).__name__}: {str(e)[:120]}); tento no próximo envio")
+
+
+LOG_CONFERENCIA = LOGS / "conferencia.csv"
+CONCLUIDOS = FEITOS | {"confere", "cep_diferente"}
+
+
+def carregar_conferidos():
+    if not LOG_CONFERENCIA.exists():
+        return set()
+    with open(LOG_CONFERENCIA, encoding="utf-8", newline="") as f:
+        return {r["id_cliente_servico"] for r in csv.DictReader(f) if r["status"] in ("confere", "cep_diferente")}
+
+
+def conferir_cartao(page, linha, args, tela):
+    """Só lê: compara o CEP do cartão do serviço no Hub com o cep_novo da planilha. Não altera nada."""
+    OBSERVACOES_LIDAS.clear()
+    cartao = abrir_servico(page, linha)
+    cep, novo = cep_do_cartao(cartao), so_digitos(linha["cep_novo"])
+    if cep == novo:
+        return "confere", {"cep_hub": cep}
+    return "cep_diferente", {"cep_hub": cep, "cep_planilha": novo}
 
 
 def executar(args):
@@ -713,29 +779,40 @@ def executar(args):
     else:
         print(f"AVISO: coluna '{args.coluna_check}' não encontrada; linhas já feitas NÃO serão ignoradas. Colunas: {colunas}")
     linhas = selecionar(todas, set(map(so_digitos, args.id)) if args.id else None, args.coluna_check)
+    if args.conferir_marcados:  # só leitura: confere no Hub os serviços já marcados como feitos
+        ja = carregar_conferidos()
+        linhas = [r for r in todas if marcado(r, args.coluna_check) and so_digitos(r.get("id_cliente_servico"))
+                  and (r.get("cidade") or "").strip().upper() in CIDADES and len(so_digitos(r.get("cep_novo"))) == 8
+                  and (not args.id or so_digitos(r["id_cliente_servico"]) in set(map(so_digitos, args.id)))
+                  and so_digitos(r["id_cliente_servico"]) not in ja]
     feitos = carregar_feitos()
     pulados = set() if (args.refazer_pulados or args.id) else carregar_pulados()
     fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados]
-    if pulados:
+    if args.conferir_marcados:
+        fila = linhas  # conferir não exclui o que o robô já fez: a ideia é revisar todos os marcados
+    if pulados and not args.conferir_marcados:
         print(f"{len(pulados)} serviços pulados em rodadas anteriores ficam de fora (use --refazer-pulados para tentar de novo)")
     if args.inspecionar:
         fila = fila[: args.inspecionar]
     elif not args.todos:
         fila = fila[: args.limite]
-    modo = "inspeção" if args.inspecionar else ("GRAVAÇÃO" if args.gravar else "simulação (não grava)")
+    modo = ("conferência dos marcados (só leitura)" if args.conferir_marcados else
+            "inspeção" if args.inspecionar else ("GRAVAÇÃO" if args.gravar else "simulação (não grava)"))
     faltam = len([r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados])
     print(f"Faltam {faltam} de {len(linhas)} serviços elegíveis; {len(fila)} nesta rodada. Modo: {modo}")
     if not fila:
         return
-    arquivo_log = LOG_GRAVACAO if args.gravar else LOG_SIMULACAO
+    arquivo_log = LOG_CONFERENCIA if args.conferir_marcados else (LOG_GRAVACAO if args.gravar else LOG_SIMULACAO)
     marcador = None
-    if args.planilha and args.gravar:
+    if args.planilha and (args.gravar or args.conferir_marcados):
         marcador = MarcadorPlanilha(args.planilha, args.credenciais, args.coluna_check, args.aba)
-        marcador.pendentes.extend(sorted(feitos))  # recupera o que o log já tem e a planilha ainda não
+        if args.gravar:
+            marcador.pendentes.extend(sorted(feitos))  # recupera o que o log já tem e a planilha ainda não
         marcador.enviar()
         import atexit
 
         atexit.register(marcador.enviar)  # também no Ctrl+C
+    funcao = conferir_cartao if args.conferir_marcados else processar
     tela = LOGS / "telas"
 
     with sync_playwright() as p:
@@ -754,7 +831,7 @@ def executar(args):
         for n, linha in enumerate(fila, 1):
             idcs = so_digitos(linha["id_cliente_servico"])
             try:
-                status, det = processar(page, linha, args, tela)
+                status, det = funcao(page, linha, args, tela)
                 erros_seguidos = 0
             except ErroPulavel as e:
                 status, _, info = str(e).partition(":")
@@ -786,11 +863,13 @@ def executar(args):
                 faltam -= 1
                 if marcador:
                     marcador.marcar(idcs)
+            if marcador:
+                marcador.observar(idcs, texto_observacao(status, det))
             print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else "")
                   + (f"  | faltam {faltam}" if args.gravar else ""))
             if status == "simulado_ok":
                 print("   antes:", det["antes"], "\n   após trocar o CEP:", det["apos_trocar_cep"])
-            if status in FEITOS:
+            if status in CONCLUIDOS:
                 alarmes = sem_feito = 0
             else:
                 sem_feito += 1
@@ -882,6 +961,8 @@ def main(argv=None):
                     help="bairros a até X km (entre os centros) contam como próximos (padrão 3)")
     ap.add_argument("--rua-parecida", type=float, default=0.6,
                     help="semelhança mínima (0-1) para a rua contar como a mesma (padrão 0.6)")
+    ap.add_argument("--conferir-marcados", action="store_true",
+                    help="só leitura: confere no Hub o CEP dos serviços já marcados em 'feito' (log em logs/conferencia.csv)")
     ap.add_argument("--ler-todos-enderecos", action="store_true",
                     help="lê os 4 endereços de todo cliente (mais lento, ~+4 s) em vez de só quando a lista mostra diferença")
     ap.add_argument("--refazer-pulados", action="store_true",
