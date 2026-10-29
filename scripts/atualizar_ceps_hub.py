@@ -401,10 +401,19 @@ def ler_todos_enderecos(page):
         esperar_estabilizar(page, dlg, minimo_ms=600)
         todos[tipo] = ler_campos(dlg)
         fechar_formulario(page, dlg)
+        fechar_observacoes(page, espera_ms=800)  # o aviso pode reaparecer e cobrir a lista
         try:  # a lista volta a aparecer quando o painel fecha; se não voltar, a janela do serviço foi fechada
             page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).first.wait_for(timeout=5000)
         except Exception:  # noqa: BLE001
-            raise ErroPulavel("janela_do_servico_fechou")
+            LOGS.joinpath("telas").mkdir(parents=True, exist_ok=True)
+            captura = LOGS / "telas" / f"janela_fechou_{datetime.now():%H%M%S}.png"
+            try:
+                page.screenshot(path=str(captura))
+                titulos = page.evaluate(JS_TITULOS)
+            except Exception:  # noqa: BLE001
+                titulos = []
+            raise ErroPulavel(f"janela_do_servico_fechou:tipo={tipo};lidos={list(todos)};captura={captura.name};"
+                              f"titulos={json.dumps(titulos, ensure_ascii=False)[:300]}")
     return todos
 
 
