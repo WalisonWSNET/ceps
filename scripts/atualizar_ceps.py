@@ -89,7 +89,7 @@ def carrega_ref(path):
         tipo = TIPOS.get(sem_acento(r["tipo"].lower()).replace(".", "").split(" ")[0])
         ref[r["cidade"].upper()].append(
             dict(k=chave(nome), cep=r["cep"], tipo=tipo, lo=lo, hi=hi, par=par,
-                 bairro=tokens_bairro(r["bairro"]), txt=f'{r["cep"]} ({r["bairro"]}; {r["logradouro"]})')
+                 bairro=tokens_bairro(r["bairro"]), bairro_txt=r["bairro"], txt=f'{r["cep"]} ({r["bairro"]}; {r["logradouro"]})')
         )
     idx = {c: defaultdict(list) for c in ref}
     for c, lst in ref.items():

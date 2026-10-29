@@ -44,6 +44,7 @@ CIDADES = {"ITANHAÉM", "MONGAGUÁ", "PERUÍBE"}
 STATUS_CONFIAVEIS = {
     "exato", "exato_por_bairro", "exato_por_numero", "exato_por_faixa", "exato_por_coordenada",
     "aprox_exato", "aprox_exato_por_numero", "aprox_exato_por_bairro",
+    "exato_por_geografia",  # escolhido pela coordenada do cliente (refinar_ceps_geografia.py)
     "conferido_manual",  # linhas dos status duvidosos que você revisou e escolheu o CEP em cep_novo
 }
 ALARMES = ("verificacao_", "restauracao_", "cep_nao_ficou", "botao_", "campo_sumiu", "formulario")  # sinal de problema geral
