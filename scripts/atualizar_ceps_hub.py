@@ -144,7 +144,7 @@ def carregar_pulados():
     with open(LOG_GRAVACAO, encoding="utf-8", newline="") as f:
         for r in csv.DictReader(f):
             ultimo[r["id_cliente_servico"]] = r["status"]
-    return {i for i, st in ultimo.items() if st in PULADOS}
+    return {i for i, st in ultimo.items() if st in PULADOS or st.startswith(("enderecos_diferentes", "enderecos_conflito"))}
 
 
 def registrar(arquivo, linha, status, detalhes=None):
@@ -265,27 +265,84 @@ def cep_do_cartao(cartao):
     return so_digitos(m.group(2)) if m else None
 
 
-def checar_enderecos_iguais(page):
-    """'Atualizar Todos' copia o endereço editado para todos os tipos: só segue se todos já são iguais."""
-    linhas = page.get_by_role("row").filter(has_text=re.compile(r"CEP:\s*\d"))
+TIPOS_ENDERECO = re.compile(r"Instala[çc][ãa]o|Cadastral|Cobran[çc]a|Fiscal", re.I)
+LINHAS_ENDERECO = re.compile(r"CEP:\s*\d")
+
+
+def enderecos_iguais(page):
+    """Os 4 endereços (Instalação/Cadastral/Cobrança/Fiscal) têm o mesmo texto na lista?"""
+    linhas = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO)
     textos = [re.sub(r"\s+", " ", t).strip() for t in linhas.all_inner_texts()]
-    limpos = {re.sub(r"^(Instala[çc][ãa]o|Cadastral|Cobran[çc]a|Fiscal)\s*", "", t, flags=re.I).strip() for t in textos}
-    if len(limpos) > 1:
-        raise ErroPulavel("enderecos_diferentes:" + " || ".join(sorted(limpos))[:300])
+    return len({re.sub(r"^(Instala[çc][ãa]o|Cadastral|Cobran[çc]a|Fiscal)\s*", "", t, flags=re.I).strip()
+                for t in textos}) <= 1
 
 
-def abrir_dialogo_endereco(page, cartao):
+def ler_todos_enderecos(page):
+    """Abre o formulário de cada tipo de endereço, lê os campos e DESCARTA (nada é gravado)."""
+    linhas = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO)
+    n = linhas.count()
+    todos = {}
+    for i in range(n):
+        linha = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).nth(i)
+        m = TIPOS_ENDERECO.search(linha.inner_text())
+        tipo = m.group(0).lower() if m else f"linha{i}"
+        linha.get_by_label("Editar").click()
+        dlg = achar_formulario(page)
+        esperar_estabilizar(page, dlg, minimo_ms=600)
+        todos[tipo] = ler_campos(dlg)
+        clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
+        for _ in range(12):  # espera o formulário sumir
+            if page.get_by_text(re.compile(r"Endere[çc]o de Cliente")).filter(visible=True).count() == 0:
+                break
+            page.wait_for_timeout(250)
+    return todos
+
+
+NUCLEO = ("cep", "estado", "cidade", "bairro", "logradouro", "numero")
+MESCLAR = ("complemento", "referencia")
+
+
+def mesclar_enderecos(todos):
+    """Se os endereços só diferem em complemento/referência, devolve o valor a usar em todos (o preenchido).
+    Qualquer outra diferença, ou dois valores preenchidos diferentes, vira ErroPulavel."""
+    mapas = {t: {k: c["valor"].strip() for k, c in mapear(cs).items()} for t, cs in todos.items()}
+    for chave in NUCLEO:
+        valores_ = {so_digitos(m.get(chave, "")) if chave == "cep" else re.sub(r"\s+", " ", m.get(chave, "")).casefold()
+                    for m in mapas.values()}
+        if len(valores_) > 1:
+            raise ErroPulavel(f"enderecos_diferentes_{chave}:" + " | ".join(sorted(valores_))[:200])
+    auto = {frozenset((c["rotulo"], c["valor"].strip()) for c in cs
+                      if c["tipo"] == "search" and not derivado(c)) for cs in todos.values()}
+    if len(auto) > 1:
+        raise ErroPulavel("enderecos_diferentes_condominio")
+    mesclado = {}
+    for chave in MESCLAR:
+        preenchidos = {m.get(chave, "") for m in mapas.values() if m.get(chave, "")}
+        if len(preenchidos) > 1:
+            raise ErroPulavel(f"enderecos_conflito_{chave}:" + " | ".join(sorted(preenchidos))[:200])
+        mesclado[chave] = next(iter(preenchidos), "")
+    return mesclado
+
+
+def abrir_aba_enderecos(page, cartao):
     fechar_observacoes(page)
     cartao.get_by_role("button", name="Outras Opções").click()
     page.get_by_role("menuitem", name="Editar").click()
     page.get_by_role("button", name="ENDEREÇOS").click()
+    page.get_by_role("row").filter(has_text=re.compile("Cadastral")).first.wait_for()
+
+
+def abrir_linha_cadastral(page):
     linhas = page.get_by_role("row").filter(has_text=re.compile("Cadastral"))
-    linhas.first.wait_for()
-    checar_enderecos_iguais(page)
     if linhas.count() != 1:
         raise ErroPulavel(f"linhas_cadastral_{linhas.count()}")
     linhas.get_by_label("Editar").click()
     return achar_formulario(page)
+
+
+def abrir_dialogo_endereco(page, cartao):
+    abrir_aba_enderecos(page, cartao)
+    return abrir_linha_cadastral(page)
 
 
 def achar_formulario(page):
@@ -429,7 +486,11 @@ def processar(page, linha, args, tela):
     if atual != antigo:
         return "cep_divergente", {"cep_cartao": atual, "cep_planilha": antigo}
 
-    dialogo = abrir_dialogo_endereco(page, cartao)
+    abrir_aba_enderecos(page, cartao)
+    mesclado = None
+    if args.ler_todos_enderecos or not enderecos_iguais(page):  # diferem (ex.: só um tem complemento)
+        mesclado = mesclar_enderecos(ler_todos_enderecos(page))
+    dialogo = abrir_linha_cadastral(page)
     esperar_estabilizar(page, dialogo, minimo_ms=600)  # o formulário pode terminar de carregar depois de abrir
     campos = ler_campos(dialogo)
     mapa = mapear(campos)
@@ -459,9 +520,21 @@ def processar(page, linha, args, tela):
         return "campo_autocompletar_preenchido", auto
 
     guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
+    if mesclado:  # completa o Cadastral com o complemento/referência que só existiam em outro tipo
+        atuais = mapear(ler_campos(dialogo))
+        for chave in MESCLAR:
+            if atuais[chave]["valor"].strip() != mesclado[chave]:
+                dialogo.locator("input, textarea").nth(atuais[chave]["i"]).fill(mesclado[chave])
+        depois_m = mapear(ler_campos(dialogo))
+        for chave in MESCLAR:
+            if depois_m[chave]["valor"].strip() != mesclado[chave]:
+                raise ErroPulavel(f"mesclagem_falhou_{chave}")
+        final = valores(ler_campos(dialogo))
     marca("trocar_cep")
 
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
+    if mesclado:
+        detalhes["mesclado"] = mesclado
     if not args.gravar:
         tela.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(tela / f"{idcs}_simulacao.png"))
@@ -479,7 +552,11 @@ def processar(page, linha, args, tela):
         conf = {c["i"]: c for c in ler_campos(dialogo)}
         detalhes["conferido"] = valores(list(conf.values()))
         for i, c in guardar.items():
-            if i not in conf or conf[i]["valor"].strip() != c["valor"].strip():
+            esperado = c["valor"].strip()
+            for chave in MESCLAR:
+                if mesclado and mapear([c]).get(chave):
+                    esperado = mesclado[chave]
+            if i not in conf or conf[i]["valor"].strip() != esperado:
                 raise ErroPulavel(f"verificacao_{c['rotulo']}_nao_confere")
     marca("verificacao")
     return "ok", detalhes
@@ -705,6 +782,8 @@ def main(argv=None):
     ap.add_argument("--tempos", action="store_true", help="mostra quanto tempo levou cada etapa de cada cliente")
     ap.add_argument("--pausa", type=float, nargs=2, default=[0.3, 0.8], metavar=("MIN", "MAX"),
                     help="pausa aleatória entre clientes, em segundos (padrão 0.3 0.8)")
+    ap.add_argument("--ler-todos-enderecos", action="store_true",
+                    help="lê os 4 endereços de todo cliente (mais lento, ~+4 s) em vez de só quando a lista mostra diferença")
     ap.add_argument("--refazer-pulados", action="store_true",
                     help="tenta de novo os serviços que já foram pulados (servico_nao_encontrado, numero_divergente...)")
     ap.add_argument("--id", nargs="+", help="processa só estes id_cliente_servico")
