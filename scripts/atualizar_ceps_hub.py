@@ -228,6 +228,34 @@ def fechar_observacoes(page, espera_ms=0):
     raise ErroPulavel("observacoes_nao_fechou")  # 5 cliques em OK e a janela continua
 
 
+def escolher_status_todos(page):
+    """A consulta abre com 'Status Cadastro = Ativo': troca para 'Todos' (clientes inativos)."""
+    page.get_by_label(re.compile(r"Status Cadastro")).first.click()
+    opcoes = page.get_by_role("option")
+    opcoes.first.wait_for()
+    opcoes.filter(has_text=re.compile(r"^\s*Todos\s*$")).first.click()
+
+
+def aguardar_cliente(page):
+    """Espera o resultado da consulta. Se vier vazio, refaz a consulta com Status Cadastro = Todos."""
+    menus = page.locator("md-menu").filter(has_text=re.compile(r"Ver\s*DASHBOARD"))
+    vazio = page.get_by_text(re.compile(r"Não foi encontrado nenhum resultado")).filter(visible=True)
+    ampliou = False
+    for _ in range(80):  # ~20 s
+        if menus.count():
+            return menus
+        if vazio.count():
+            if ampliou:
+                raise ErroPulavel("cliente_nao_encontrado")
+            escolher_status_todos(page)
+            page.get_by_role("button", name="Consultar").click()
+            ampliou = True
+            page.wait_for_timeout(1500)
+            continue
+        page.wait_for_timeout(250)
+    raise ErroPulavel("consulta_sem_resposta")
+
+
 def abrir_servico(page, linha):
     """Consulta o cliente, abre a lista de serviços e devolve o cartão do serviço certo."""
     from playwright.sync_api import expect  # noqa: F401
@@ -243,8 +271,7 @@ def abrir_servico(page, linha):
     page.get_by_role("textbox", name="Consulta *").fill(codigo)
     page.get_by_role("button", name="Consultar").click()
 
-    menus = page.locator("md-menu").filter(has_text=re.compile(r"Ver\s*DASHBOARD"))
-    menus.first.wait_for()
+    menus = aguardar_cliente(page)
     if menus.count() != 1:
         raise ErroPulavel(f"consulta_retornou_{menus.count()}_clientes")
     fechar_observacoes(page)
