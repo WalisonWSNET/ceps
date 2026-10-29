@@ -477,7 +477,7 @@ def evidencia(page):
 REABERTURAS = [0]  # quantas vezes a janela do serviço sumiu e foi reaberta no cliente atual
 
 
-def ler_todos_enderecos(page, reabrir=None):
+def ler_todos_enderecos(page, reabrir=None, ignorar=()):
     """Abre o formulário de cada tipo de endereço, lê os campos e fecha SEM gravar.
     Se a janela do serviço sumir ao fechar um painel, chama `reabrir()` (volta ao serviço/aba Endereços) e segue."""
     n = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).count()
@@ -486,6 +486,9 @@ def ler_todos_enderecos(page, reabrir=None):
         linha = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).nth(i)
         m = TIPOS_ENDERECO.search(linha.inner_text())
         tipo = m.group(0).lower() if m else f"linha{i}"
+        if tipo in ignorar:  # ex.: o Cadastral: fechar o painel dele derruba a janela do serviço; ele é lido ao editar
+            i += 1
+            continue
         linha.get_by_label("Editar").click()
         dlg = achar_formulario(page)
         esperar_estabilizar(page, dlg, minimo_ms=600)
@@ -860,8 +863,8 @@ def processar(page, linha, args, tela):
     mesclado = None
     todos_lidos = None
     if args.ler_todos_enderecos or not enderecos_iguais(page):  # diferem (ex.: só um tem complemento)
-        todos_lidos = ler_todos_enderecos(page, lambda: reabrir_rapido(page, linha))
-        mesclado = mesclar_enderecos(todos_lidos)
+        # o Cadastral fica de fora: o robô abre o painel dele para editar, e fechar esse painel sem gravar derruba a janela
+        todos_lidos = ler_todos_enderecos(page, lambda: reabrir_rapido(page, linha), ignorar=("cadastral",))
     dialogo = abrir_linha_cadastral(page)
     esperar_estabilizar(page, dialogo, minimo_ms=600)  # o formulário pode terminar de carregar depois de abrir
     campos = ler_campos(dialogo)
@@ -892,6 +895,10 @@ def processar(page, linha, args, tela):
             mapa = mapear(campos)
         else:
             return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero")}
+
+    if todos_lidos is not None:  # junta o Cadastral (lido agora) aos outros 3 e decide o que mesclar
+        todos_lidos["cadastral"] = campos
+        mesclado = mesclar_enderecos(todos_lidos)
 
     # campos de autocompletar (ex.: Condomínio) só guardam o valor ao escolher uma opção da lista:
     # se estiverem preenchidos, o robô não consegue recolocá-los com segurança -> deixa para ver à mão
