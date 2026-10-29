@@ -139,7 +139,7 @@ def carregar_feitos():
 
 
 PULADOS = {"servico_nao_encontrado", "numero_divergente", "cep_divergente", "campo_autocompletar_preenchido",
-           "enderecos_diferentes", "cep_formulario_divergente", "rua_e_bairro_divergem", "cidade_mudou"}  # precisam de tratamento à mão; não repetir a cada rodada
+           "enderecos_diferentes", "cep_formulario_divergente", "bairro_longe", "rua_e_bairro_divergem", "cidade_mudou"}  # precisam de tratamento à mão; não repetir a cada rodada
 
 
 def carregar_pulados():
@@ -369,7 +369,8 @@ def construir_bairros(linhas):
 
 def avaliar_divergencia(antes, depois, cidade_planilha, bairros, perto_km=3.0, rua_parecida=0.6):
     """Compara rua/bairro/cidade do formulário antes e depois do CEP novo.
-    Devolve (motivo_para_pular_ou_None, info). Só pula se a cidade muda, ou se a rua E o bairro divergem muito."""
+    Devolve (motivo_para_pular_ou_None, info). Pula se a cidade muda ou se o bairro muda para um bairro longe
+    (ou desconhecido); só a rua mudar não impede."""
     info = {}
     if norm_txt(antes.get("cidade")) != norm_txt(depois.get("cidade")):
         return "cidade_mudou", {"antes": antes.get("cidade"), "depois": depois.get("cidade")}
@@ -387,8 +388,8 @@ def avaliar_divergencia(antes, depois, cidade_planilha, bairros, perto_km=3.0, r
     info = {"rua": [antes.get("logradouro"), depois.get("logradouro")], "rua_semelhanca": round(sim, 2),
             "bairro": [antes.get("bairro"), depois.get("bairro")],
             "bairro_km": None if dist is None else round(dist, 1)}
-    if rua_muito and bairro_longe:
-        return "rua_e_bairro_divergem", info
+    if bairro_longe:  # bairro só pode mudar para um bairro perto; a rua sozinha pode mudar à vontade
+        return "bairro_longe", info
     return None, info
 
 
