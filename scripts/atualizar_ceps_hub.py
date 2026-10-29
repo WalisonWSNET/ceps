@@ -134,7 +134,7 @@ def carregar_feitos():
 
 
 PULADOS = {"servico_nao_encontrado", "numero_divergente", "cep_divergente", "campo_autocompletar_preenchido",
-           "enderecos_diferentes"}  # precisam de tratamento à mão; não repetir a cada rodada
+           "enderecos_diferentes", "cep_formulario_divergente"}  # precisam de tratamento à mão; não repetir a cada rodada
 
 
 def carregar_pulados():
@@ -430,6 +430,7 @@ def processar(page, linha, args, tela):
         return "cep_divergente", {"cep_cartao": atual, "cep_planilha": antigo}
 
     dialogo = abrir_dialogo_endereco(page, cartao)
+    esperar_estabilizar(page, dialogo, minimo_ms=600)  # o formulário pode terminar de carregar depois de abrir
     campos = ler_campos(dialogo)
     mapa = mapear(campos)
     marca("abrir_endereco")
@@ -444,6 +445,8 @@ def processar(page, linha, args, tela):
     if faltando:
         raise ErroFatal(f"campos não encontrados na tela: {faltando}. Rode --inspecionar e ajuste PADROES.")
 
+    if so_digitos(mapa["cep"]["valor"]) != antigo:  # formulário lido pela metade ou endereço diferente do esperado
+        return "cep_formulario_divergente", {"cep_formulario": mapa["cep"]["valor"], "cep_planilha": antigo}
     n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
     if n_hub != n_plan:  # inclui Hub vazio e planilha com número: o endereço Cadastral não é o da instalação
         return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero")}
