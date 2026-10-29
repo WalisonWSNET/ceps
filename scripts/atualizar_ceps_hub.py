@@ -20,6 +20,11 @@ endereço: assim um cliente com vários serviços altera só o serviço certo.
 """
 import argparse
 import csv
+import difflib
+import math
+import statistics
+import unicodedata
+from collections import defaultdict
 import json
 import random
 import re
@@ -134,7 +139,7 @@ def carregar_feitos():
 
 
 PULADOS = {"servico_nao_encontrado", "numero_divergente", "cep_divergente", "campo_autocompletar_preenchido",
-           "enderecos_diferentes", "cep_formulario_divergente"}  # precisam de tratamento à mão; não repetir a cada rodada
+           "enderecos_diferentes", "cep_formulario_divergente", "rua_e_bairro_divergem", "cidade_mudou"}  # precisam de tratamento à mão; não repetir a cada rodada
 
 
 def carregar_pulados():
@@ -315,13 +320,76 @@ def mesclar_enderecos(todos):
                       if c["tipo"] == "search" and not derivado(c)) for cs in todos.values()}
     if len(auto) > 1:
         raise ErroPulavel("enderecos_diferentes_condominio")
-    mesclado = {}
+    mesclado, conflitos = {}, {}
     for chave in MESCLAR:
         preenchidos = {m.get(chave, "") for m in mapas.values() if m.get(chave, "")}
-        if len(preenchidos) > 1:
-            raise ErroPulavel(f"enderecos_conflito_{chave}:" + " | ".join(sorted(preenchidos))[:200])
-        mesclado[chave] = next(iter(preenchidos), "")
+        if len(preenchidos) > 1:  # valores diferentes: não preenche (os originais ficam só no log)
+            conflitos[chave] = sorted(preenchidos)
+            mesclado[chave] = ""
+        else:
+            mesclado[chave] = next(iter(preenchidos), "")
+    if conflitos:
+        mesclado["_conflitos"] = conflitos
     return mesclado
+
+
+TIPOS_VIA = {"rua", "r", "avenida", "av", "travessa", "tv", "alameda", "al", "estrada", "est", "praca", "pc",
+             "rodovia", "rod", "viela", "vla", "ladeira", "lad", "via"}
+
+
+PARTICULAS = {"de", "da", "do", "das", "dos", "e"}
+
+
+def norm_txt(s):
+    s = "".join(c for c in unicodedata.normalize("NFD", (s or "").lower()) if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", s)).strip()
+
+
+def nome_rua(s):
+    return " ".join(sorted(t for t in norm_txt(s).split() if t not in TIPOS_VIA and t not in PARTICULAS))
+
+
+def km(a, b):
+    return math.hypot((a[0] - b[0]) * 111.0, (a[1] - b[1]) * 111.0 * math.cos(math.radians(24.2)))
+
+
+def construir_bairros(linhas):
+    """Centro de cada bairro (mediana das coordenadas dos clientes da planilha); precisa de 3+ clientes."""
+    pontos = defaultdict(list)
+    for r in linhas:
+        try:
+            la, lo = (float(x) for x in (r.get("coordenadas") or "").strip('"').split(","))
+        except ValueError:
+            continue
+        if -25 < la < -23.5 and -47.5 < lo < -46.3:
+            pontos[(norm_txt(r.get("cidade")), norm_txt(r.get("bairro")))].append((la, lo))
+    return {k: (statistics.median(p[0] for p in v), statistics.median(p[1] for p in v))
+            for k, v in pontos.items() if len(v) >= 3}
+
+
+def avaliar_divergencia(antes, depois, cidade_planilha, bairros, perto_km=3.0, rua_parecida=0.6):
+    """Compara rua/bairro/cidade do formulário antes e depois do CEP novo.
+    Devolve (motivo_para_pular_ou_None, info). Só pula se a cidade muda, ou se a rua E o bairro divergem muito."""
+    info = {}
+    if norm_txt(antes.get("cidade")) != norm_txt(depois.get("cidade")):
+        return "cidade_mudou", {"antes": antes.get("cidade"), "depois": depois.get("cidade")}
+    rua_a, rua_d = nome_rua(antes.get("logradouro")), nome_rua(depois.get("logradouro"))
+    sim = difflib.SequenceMatcher(None, rua_a, rua_d).ratio() if rua_a or rua_d else 1.0
+    rua_muito = sim < rua_parecida
+    ba, bd = norm_txt(antes.get("bairro")), norm_txt(depois.get("bairro"))
+    bairro_mudou = ba != bd
+    dist = None
+    if bairro_mudou:
+        c = norm_txt(cidade_planilha)
+        A, B = bairros.get((c, ba)), bairros.get((c, bd))
+        dist = km(A, B) if A and B else None
+    bairro_longe = bairro_mudou and (dist is None or dist > perto_km)  # bairro desconhecido = longe (conservador)
+    info = {"rua": [antes.get("logradouro"), depois.get("logradouro")], "rua_semelhanca": round(sim, 2),
+            "bairro": [antes.get("bairro"), depois.get("bairro")],
+            "bairro_km": None if dist is None else round(dist, 1)}
+    if rua_muito and bairro_longe:
+        return "rua_e_bairro_divergem", info
+    return None, info
 
 
 def abrir_aba_enderecos(page, cartao):
@@ -522,7 +590,7 @@ def processar(page, linha, args, tela):
     guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
     if mesclado:  # completa o Cadastral com o complemento/referência que só existiam em outro tipo
         atuais = mapear(ler_campos(dialogo))
-        for chave in MESCLAR:
+        for chave in MESCLAR:  # (em conflito o valor é "" e o campo fica em branco)
             if atuais[chave]["valor"].strip() != mesclado[chave]:
                 dialogo.locator("input, textarea").nth(atuais[chave]["i"]).fill(mesclado[chave])
         depois_m = mapear(ler_campos(dialogo))
@@ -530,9 +598,17 @@ def processar(page, linha, args, tela):
             if depois_m[chave]["valor"].strip() != mesclado[chave]:
                 raise ErroPulavel(f"mesclagem_falhou_{chave}")
         final = valores(ler_campos(dialogo))
+    atual = mapear(ler_campos(dialogo))
+    motivo, info_div = avaliar_divergencia(
+        {k: mapa[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in mapa},
+        {k: atual[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in atual},
+        linha.get("cidade"), args.bairros, args.bairro_perto_km, args.rua_parecida)
+    if motivo:
+        return motivo, info_div  # nada foi gravado
     marca("trocar_cep")
 
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
+    detalhes["rua_bairro"] = info_div
     if mesclado:
         detalhes["mesclado"] = mesclado
     if not args.gravar:
@@ -625,6 +701,7 @@ def executar(args):
     from playwright.sync_api import sync_playwright
 
     todas = ler_linhas(args.csv)
+    args.bairros = construir_bairros(todas)
     colunas = list(todas[0].keys()) if todas else []
     if any(c and c.strip().lower() == args.coluna_check.lower() for c in colunas):
         n_marcadas = sum(marcado(r, args.coluna_check) for r in todas)
@@ -753,6 +830,24 @@ def resumo(args):
         if any(v for k, v in antes.items() if re.search(r"Complemento|Refer[êe]ncia|Condom", k, re.I)):
             preservados += 1
     print(f"Concluídos (ok) que tinham complemento/referência/condomínio preenchidos: {preservados}")
+    mudou_rua = mudou_bairro = mesclados = conflitos = 0
+    pares = Counter()
+    for r in ultimo.values():
+        if r["status"] != "ok":
+            continue
+        det = json.loads(r["detalhes"] or "{}")
+        rb = det.get("rua_bairro") or {}
+        if rb.get("rua") and norm_txt(rb["rua"][0]) != norm_txt(rb["rua"][1]):
+            mudou_rua += 1
+        if rb.get("bairro") and norm_txt(rb["bairro"][0]) != norm_txt(rb["bairro"][1]):
+            mudou_bairro += 1
+            pares[(rb["bairro"][0], rb["bairro"][1], rb.get("bairro_km"))] += 1
+        mesclados += bool(det.get("mesclado"))
+        conflitos += bool((det.get("mesclado") or {}).get("_conflitos"))
+    print(f"Concluídos em que o Hub mudou a rua: {mudou_rua}; o bairro: {mudou_bairro}; "
+          f"com complemento/referência mesclados: {mesclados} (em conflito, deixados em branco: {conflitos})")
+    for (a_, d_, k_), n_ in pares.most_common(10):
+        print(f"   bairro {a_} -> {d_} ({k_} km): {n_}")
     pendentes = [r for r in ultimo.values() if r["status"] not in FEITOS]
     if pendentes:
         with open(LOGS / "pendentes.csv", "w", encoding="utf-8", newline="") as f:
@@ -782,6 +877,10 @@ def main(argv=None):
     ap.add_argument("--tempos", action="store_true", help="mostra quanto tempo levou cada etapa de cada cliente")
     ap.add_argument("--pausa", type=float, nargs=2, default=[0.3, 0.8], metavar=("MIN", "MAX"),
                     help="pausa aleatória entre clientes, em segundos (padrão 0.3 0.8)")
+    ap.add_argument("--bairro-perto-km", type=float, default=3.0,
+                    help="bairros a até X km (entre os centros) contam como próximos (padrão 3)")
+    ap.add_argument("--rua-parecida", type=float, default=0.6,
+                    help="semelhança mínima (0-1) para a rua contar como a mesma (padrão 0.6)")
     ap.add_argument("--ler-todos-enderecos", action="store_true",
                     help="lê os 4 endereços de todo cliente (mais lento, ~+4 s) em vez de só quando a lista mostra diferença")
     ap.add_argument("--refazer-pulados", action="store_true",
