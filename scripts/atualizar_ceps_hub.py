@@ -30,7 +30,7 @@ import random
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HUB = "https://wsnet.hubsoft.com.br/"
@@ -1101,6 +1101,14 @@ def conferir_cartao(page, linha, args, tela):
     return "cep_diferente", {"cep_hub": cep, "cep_planilha": novo}
 
 
+def proximo_horario(hhmm, agora=None):
+    """Próxima ocorrência de HH:MM (hoje, ou amanhã se já passou)."""
+    h, m = (int(x) for x in hhmm.split(":"))
+    agora = agora or datetime.now()
+    alvo = agora.replace(hour=h, minute=m, second=0, microsecond=0)
+    return alvo if alvo > agora else alvo + timedelta(days=1)
+
+
 def executar(args):
     from playwright.sync_api import sync_playwright
 
@@ -1178,7 +1186,13 @@ def executar(args):
     with sync_playwright() as p:
         ctx, page = abrir(p)
         erros_seguidos = alarmes = sem_feito = 0
+        limite_t = proximo_horario(args.ate) if args.ate else None
+        if limite_t:
+            print(f"O robô vai parar sozinho, depois de terminar o cliente em andamento, às {limite_t:%d/%m %H:%M}.")
         for n, linha in enumerate(fila, 1):
+            if limite_t and datetime.now() >= limite_t:
+                print(f"Horário limite ({limite_t:%H:%M}) atingido. Parando com tudo salvo; rode o mesmo comando para continuar.")
+                break
             idcs = so_digitos(linha["id_cliente_servico"])
             if n > 1 and args.reiniciar and (n - 1) % args.reiniciar == 0:  # evita o navegador travar em rodadas longas
                 print(f"   reiniciando o navegador (a cada {args.reiniciar} clientes)")
@@ -1369,6 +1383,8 @@ def main(argv=None):
                          "e ignora a marca em 'feito' desses IDs")
     ap.add_argument("--conferir-marcados", action="store_true",
                     help="só leitura: confere no Hub o CEP dos serviços já marcados em 'feito' (log em logs/conferencia.csv)")
+    ap.add_argument("--ate", metavar="HH:MM",
+                    help="para sozinho neste horário (termina o cliente em andamento); ex.: --ate 07:50")
     ap.add_argument("--amostra", type=float, default=0.1, metavar="FRAC",
                     help="fração dos clientes (padrão 0.1) em que o robô lê os 4 endereços mesmo com a lista igual, "
                          "só para medir quantos têm referência diferente (0 desliga)")
