@@ -361,6 +361,19 @@ JS_FECHAR = r"""el => {
 
 DEPURAR = False
 ULTIMO_FECHAR = {}
+DIALOGOS_VISTOS = []  # alert/confirm/beforeunload que o navegador mostrou (aceitos automaticamente)
+
+
+def ao_dialogo(d):
+    DIALOGOS_VISTOS.append(f"{d.type}:{d.message[:120]}")
+    print(f"   [diálogo do navegador] {d.type}: {d.message[:120]!r}")
+    d.accept()
+
+
+JS_ANIMACOES = r"""() => Promise.race([
+  Promise.all(document.getAnimations().map(a => a.finished.catch(() => null))),
+  new Promise(r => setTimeout(r, 2500))
+]).then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))"""
 
 
 def painel_aberto(page):
@@ -385,6 +398,12 @@ def fechar_formulario(page, dlg):
     page.wait_for_timeout(1200)
     try:
         page.wait_for_load_state("networkidle", timeout=2500)
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # força o navegador a desenhar quadros e termina as animações do painel antes de fechar
+        page.bring_to_front()
+        page.screenshot(clip={"x": 0, "y": 0, "width": 2, "height": 2}, type="jpeg", quality=10)
+        page.evaluate(JS_ANIMACOES)
     except Exception:  # noqa: BLE001
         pass
     if DEPURAR:  # mostra o painel e os botões ANTES de fechar
@@ -433,7 +452,8 @@ def ler_todos_enderecos(page, reabrir=None):
         except Exception:  # noqa: BLE001
             if reabrir and REABERTURAS[0] < 4:
                 REABERTURAS[0] += 1
-                print(f"   a janela do serviço fechou depois do endereço '{tipo}'; reabrindo ({REABERTURAS[0]})")
+                print(f"   a janela do serviço fechou depois do endereço '{tipo}'; reabrindo ({REABERTURAS[0]})"
+                      + (f" | diálogos do navegador: {DIALOGOS_VISTOS[-2:]}" if DIALOGOS_VISTOS else ""))
                 reabrir()
             else:
                 LOGS.joinpath("telas").mkdir(parents=True, exist_ok=True)
@@ -444,7 +464,7 @@ def ler_todos_enderecos(page, reabrir=None):
                 except Exception:  # noqa: BLE001
                     titulos = []
                 raise ErroPulavel(f"janela_do_servico_fechou:tipo={tipo};lidos={list(todos)};x={ULTIMO_FECHAR.get('retorno')};"
-                                  f"captura={captura.name};titulos={json.dumps(titulos, ensure_ascii=False)[:300]}")
+                                  f"captura={captura.name};dialogos={DIALOGOS_VISTOS[-3:]};titulos={json.dumps(titulos, ensure_ascii=False)[:300]}")
         i += 1
     return todos
 
@@ -751,6 +771,7 @@ def processar(page, linha, args, tela):
     idcs = so_digitos(linha["id_cliente_servico"])
     antigo, novo = so_digitos(linha["cep"]), so_digitos(linha["cep_novo"])
     OBSERVACOES_LIDAS.clear()
+    DIALOGOS_VISTOS.clear()
     REABERTURAS[0] = 0
     FASES.clear()
     marca("inicio")
@@ -1059,7 +1080,7 @@ def executar(args):
         ctx = p.chromium.launch_persistent_context(str(perfil), **opcoes)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.set_default_timeout(20000)
-        page.on("dialog", lambda d: d.accept())  # "sair da página?" ao descartar formulário
+        page.on("dialog", ao_dialogo)  # "sair da página?" ao descartar formulário
         page.goto(HUB)
         if "/login" in page.url:
             input("Faça login na janela do navegador (inclusive validações) e tecle ENTER aqui... ")
