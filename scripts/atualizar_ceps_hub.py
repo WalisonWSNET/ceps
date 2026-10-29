@@ -337,37 +337,45 @@ def botoes_do_painel(dlg):
     return dlg.evaluate(JS_BOTOES)
 
 
+JS_FECHAR = r"""el => {
+  const vis = e => !!(e.offsetWidth || e.offsetHeight);
+  for (const s of ["[aria-label*='close' i]", "[aria-label*='fechar' i]", "[title*='close' i]", "[title*='fechar' i]"]) {
+    const xs = [...el.querySelectorAll(s)].filter(vis);
+    if (xs.length) { xs[xs.length - 1].click(); return s; }
+  }
+  const icones = [...el.querySelectorAll('button, [role=button], md-icon, a')]
+      .filter(e => vis(e) && /^\s*(close|clear)\s*$/i.test(e.innerText || ''));
+  if (icones.length) { icones[icones.length - 1].click(); return 'icone'; }
+  return null;
+}"""
+
+
+def painel_aberto(page):
+    """O painel de endereço está aberto se o campo CEP dele (name='cep') está visível."""
+    return page.locator("input[name='cep']").filter(visible=True).count() > 0
+
+
+def esperar_fechar(page, ms=3000):
+    for _ in range(ms // 250):
+        if not painel_aberto(page):
+            return True
+        page.wait_for_timeout(250)
+    return False
+
+
 def fechar_formulario(page, dlg):
     """Fecha o painel 'Endereço de Cliente' SEM gravar. NÃO usa Esc (fecha a janela inteira do serviço).
-    Tenta o X do próprio painel (botão do cabeçalho com close/fechar) e, se não fechar, o Descartar."""
-    titulo = page.get_by_text(re.compile(r"Endere[çc]o de Cliente")).filter(visible=True)
-
-    def fechou():
-        for _ in range(8):  # ~2 s
-            if titulo.count() == 0:
-                return True
-            page.wait_for_timeout(250)
-        return False
-
-    for loc in (
-        dlg.locator("[aria-label*='close' i], [aria-label*='fechar' i], [title*='close' i], [title*='fechar' i]"),
-        dlg.get_by_role("button", name=FECHAR),
-        dlg.locator("button, [role=button], md-icon, a").filter(has_text=re.compile(r"^\s*(close|clear)\s*$", re.I)),
-    ):
-        try:
-            loc = loc.filter(visible=True)
-            if loc.count():
-                loc.last.click(timeout=3000)
-                if fechou():
-                    return
-        except Exception:  # noqa: BLE001 - tenta a próxima forma
-            pass
-    try:
-        clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
-    except Exception:  # noqa: BLE001
-        pass
-    if fechou():
+    Usa sempre o MESMO elemento do painel (guardado antes), clica no X dele uma vez e só então tenta o Descartar."""
+    painel = dlg.element_handle()
+    if painel.evaluate(JS_FECHAR) and esperar_fechar(page):
         return
+    if painel_aberto(page):
+        try:
+            clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
+        except Exception:  # noqa: BLE001
+            pass
+        if esperar_fechar(page):
+            return
     raise ErroPulavel("formulario_nao_fechou:botoes=" + json.dumps(botoes_do_painel(dlg), ensure_ascii=False)[:600])
 
 
@@ -385,6 +393,10 @@ def ler_todos_enderecos(page):
         esperar_estabilizar(page, dlg, minimo_ms=600)
         todos[tipo] = ler_campos(dlg)
         fechar_formulario(page, dlg)
+        try:  # a lista volta a aparecer quando o painel fecha; se não voltar, a janela do serviço foi fechada
+            page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).first.wait_for(timeout=5000)
+        except Exception:  # noqa: BLE001
+            raise ErroPulavel("janela_do_servico_fechou")
     return todos
 
 
