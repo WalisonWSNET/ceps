@@ -867,7 +867,8 @@ def processar(page, linha, args, tela):
     mesclado = None
     todos_lidos = None
     lista_igual = enderecos_iguais(page)
-    if args.ler_todos_enderecos or not lista_igual:  # diferem (ex.: só um tem complemento)
+    sorteado = (not args.ler_todos_enderecos and lista_igual and args.amostra > 0 and random.random() < args.amostra)
+    if args.ler_todos_enderecos or not lista_igual or sorteado:  # sorteado: mede a taxa de referência diferente  # diferem (ex.: só um tem complemento)
         # o Cadastral fica de fora: o robô abre o painel dele para editar, e fechar esse painel sem gravar derruba a janela
         todos_lidos = ler_todos_enderecos(page, lambda: reabrir_rapido(page, linha), ignorar=("cadastral",))
     dialogo = abrir_linha_cadastral(page)
@@ -936,6 +937,8 @@ def processar(page, linha, args, tela):
     detalhes["rua_bairro"] = info_div
     detalhes["espera_status_conexao_s"] = STATUS_CONEXAO_S[0]
     detalhes["lista_dos_4_igual"] = lista_igual
+    if sorteado:
+        detalhes["amostra_4_enderecos"] = True
     if REABERTURAS[0]:
         detalhes["reaberturas"] = REABERTURAS[0]
     if mesclado:
@@ -1366,6 +1369,9 @@ def main(argv=None):
                          "e ignora a marca em 'feito' desses IDs")
     ap.add_argument("--conferir-marcados", action="store_true",
                     help="só leitura: confere no Hub o CEP dos serviços já marcados em 'feito' (log em logs/conferencia.csv)")
+    ap.add_argument("--amostra", type=float, default=0.1, metavar="FRAC",
+                    help="fração dos clientes (padrão 0.1) em que o robô lê os 4 endereços mesmo com a lista igual, "
+                         "só para medir quantos têm referência diferente (0 desliga)")
     ap.add_argument("--ler-todos-enderecos", action="store_true",
                     help="lê os 4 endereços de todo cliente (mais lento, ~+4 s) em vez de só quando a lista mostra diferença")
     ap.add_argument("--refazer-pulados", action="store_true",
