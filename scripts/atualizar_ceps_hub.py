@@ -1152,7 +1152,7 @@ def executar(args):
                   and (r.get("cidade") or "").strip().upper() in CIDADES and len(so_digitos(r.get("cep_novo"))) == 8
                   and (not args.id or so_digitos(r["id_cliente_servico"]) in set(map(so_digitos, args.id)))
                   and so_digitos(r["id_cliente_servico"]) not in ja]
-    if not args.conferir_marcados and not args.incluir_multi_servico and not args.id:
+    if args.excluir_multi_servico and not args.conferir_marcados and not args.id:
         suspeitos = servicos_multi_numero_diferente(todas)
         fora = [r for r in linhas if so_digitos(r["id_cliente_servico"]) in suspeitos]
         if fora:
@@ -1164,7 +1164,7 @@ def executar(args):
                 w.writerows((r["id_cliente_servico"], r["codigo_cliente"], r["endereco"], r["numero"], r["cidade"],
                              r.get("cep_novo")) for r in fora)
             print(f"{len(fora)} serviços de clientes com a mesma rua e números diferentes entre serviços ficam de fora "
-                  f"(lista em logs\\multi_servico_para_revisar.csv; --incluir-multi-servico para incluir)")
+                  f"(lista em logs\\multi_servico_para_revisar.csv; tirar --excluir-multi-servico para incluir)")
     feitos = carregar_feitos()
     pulados = set() if (args.refazer_pulados or args.id) else carregar_pulados()
     fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados]
@@ -1417,8 +1417,9 @@ def main(argv=None):
                     help="só leitura: confere no Hub o CEP dos serviços já marcados em 'feito' (log em logs/conferencia.csv)")
     ap.add_argument("--ate", metavar="HH:MM",
                     help="para sozinho neste horário (termina o cliente em andamento); ex.: --ate 07:50")
-    ap.add_argument("--incluir-multi-servico", action="store_true",
-                    help="inclui clientes com a mesma rua e números diferentes entre serviços (por padrão ficam de fora)")
+    ap.add_argument("--excluir-multi-servico", action="store_true",
+                    help="deixa de fora clientes com a mesma rua e números diferentes entre serviços "
+                         "(no Hub os registros de endereço são separados; só use se quiser cautela extra)")
     ap.add_argument("--amostra", type=float, default=0.1, metavar="FRAC",
                     help="fração dos clientes (padrão 0.1) em que o robô lê os 4 endereços mesmo com a lista igual, "
                          "só para medir quantos têm referência diferente (0 desliga)")
