@@ -320,6 +320,26 @@ def enderecos_iguais(page):
                 for t in textos}) <= 1
 
 
+def fechar_formulario(page):
+    """Fecha o formulário de endereço SEM gravar: Descartar, depois Esc, depois o X (o Descartar nem sempre fecha)."""
+    titulo = page.get_by_text(re.compile(r"Endere[çc]o de Cliente")).filter(visible=True)
+    for acao in ("descartar", "esc", "x"):
+        try:
+            if acao == "descartar":
+                clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
+            elif acao == "esc":
+                page.keyboard.press("Escape")
+            else:
+                page.get_by_role("button", name="Close dialog").last.click(timeout=3000)
+        except Exception:  # noqa: BLE001 - tenta a próxima forma de fechar
+            pass
+        for _ in range(8):  # ~2 s
+            if titulo.count() == 0:
+                return
+            page.wait_for_timeout(250)
+    raise ErroPulavel("formulario_nao_fechou")
+
+
 def ler_todos_enderecos(page):
     """Abre o formulário de cada tipo de endereço, lê os campos e DESCARTA (nada é gravado)."""
     linhas = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO)
@@ -333,11 +353,7 @@ def ler_todos_enderecos(page):
         dlg = achar_formulario(page)
         esperar_estabilizar(page, dlg, minimo_ms=600)
         todos[tipo] = ler_campos(dlg)
-        clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
-        for _ in range(12):  # espera o formulário sumir
-            if page.get_by_text(re.compile(r"Endere[çc]o de Cliente")).filter(visible=True).count() == 0:
-                break
-            page.wait_for_timeout(250)
+        fechar_formulario(page)
     return todos
 
 
@@ -620,7 +636,13 @@ def processar(page, linha, args, tela):
         return "cep_formulario_divergente", {"cep_formulario": mapa["cep"]["valor"], "cep_planilha": antigo}
     n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
     if n_hub != n_plan:  # inclui Hub vazio e planilha com número: o endereço Cadastral não é o da instalação
-        return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero")}
+        if args.aceitar_cep_atual and args.id and not n_hub and n_plan:
+            # correção de um CEP gravado errado: o Hub apagou o número; recoloca o da planilha antes de trocar o CEP
+            dialogo.locator("input, textarea").nth(mapa["numero"]["i"]).fill(re.sub(r"\s+", "", linha["numero"]))
+            campos = ler_campos(dialogo)
+            mapa = mapear(campos)
+        else:
+            return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero")}
 
     # campos de autocompletar (ex.: Condomínio) só guardam o valor ao escolher uma opção da lista:
     # se estiverem preenchidos, o robô não consegue recolocá-los com segurança -> deixa para ver à mão
