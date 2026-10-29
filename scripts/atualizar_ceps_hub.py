@@ -361,6 +361,20 @@ JS_FECHAR = r"""el => {
 
 DEPURAR = False
 ULTIMO_FECHAR = {}
+PEDIDOS = []        # (instante, método, url) dos últimos pedidos de rede do Hub
+JANELA_ABERTA_EM = [0.0]
+JS_INIT = r"""(() => {
+  window.__remocoes = [];
+  const reg = (n, via) => { try {
+    if (n && n.nodeType === 1 && (n.tagName === 'MD-DIALOG' || (n.querySelector && n.querySelector('md-dialog'))))
+      window.__remocoes.push({t: Date.now(), via, tag: n.tagName,
+        stack: new Error().stack.split('\n').slice(2, 10).map(s => s.trim().slice(0, 150))});
+  } catch (e) {} };
+  const rc = Node.prototype.removeChild;
+  Node.prototype.removeChild = function (c) { reg(c, 'removeChild'); return rc.call(this, c); };
+  const rm = Element.prototype.remove;
+  Element.prototype.remove = function () { reg(this, 'remove'); return rm.call(this); };
+})();"""
 DIALOGOS_VISTOS = []  # alert/confirm/beforeunload que o navegador mostrou (aceitos automaticamente)
 
 
@@ -429,6 +443,22 @@ def fechar_formulario(page, dlg):
     raise ErroPulavel("formulario_nao_fechou:botoes=" + json.dumps(botoes_do_painel(dlg), ensure_ascii=False)[:600])
 
 
+def evidencia(page):
+    """Registra o que aconteceu quando a janela do serviço sumiu: há quanto tempo abriu, quem a removeu e os pedidos recentes."""
+    agora = time.time()
+    try:
+        remocoes = page.evaluate("window.__remocoes || []")
+    except Exception:  # noqa: BLE001
+        remocoes = []
+    print(f"   [evidência] a janela estava aberta havia {agora - JANELA_ABERTA_EM[0]:.1f} s")
+    for r in remocoes[-2:]:
+        print(f"   [evidência] remoção de {r.get('tag')} via {r.get('via')}; pilha:")
+        for linha in r.get("stack", [])[:7]:
+            print("        ", linha)
+    for t, metodo, url in PEDIDOS[-8:]:
+        print(f"   [evidência] pedido há {agora - t:.1f} s: {metodo} ...{url}")
+
+
 REABERTURAS = [0]  # quantas vezes a janela do serviço sumiu e foi reaberta no cliente atual
 
 
@@ -450,6 +480,7 @@ def ler_todos_enderecos(page, reabrir=None):
         try:  # a lista volta a aparecer quando o painel fecha; se não voltar, a janela do serviço foi fechada
             page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).first.wait_for(timeout=5000)
         except Exception:  # noqa: BLE001
+            evidencia(page)
             if reabrir and REABERTURAS[0] < 4:
                 REABERTURAS[0] += 1
                 print(f"   a janela do serviço fechou depois do endereço '{tipo}'; reabrindo ({REABERTURAS[0]})"
@@ -560,6 +591,7 @@ def avaliar_divergencia(antes, depois, cidade_planilha, bairros, perto_km=3.0, r
 
 
 def abrir_aba_enderecos(page, cartao):
+    JANELA_ABERTA_EM[0] = time.time()
     fechar_observacoes(page)
     cartao.get_by_role("button", name="Outras Opções").click()
     page.get_by_role("menuitem", name="Editar").click()
@@ -1078,9 +1110,11 @@ def executar(args):
         if args.navegador == "chrome":
             opcoes["channel"] = "chrome"
         ctx = p.chromium.launch_persistent_context(str(perfil), **opcoes)
+        ctx.add_init_script(JS_INIT)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.set_default_timeout(20000)
         page.on("dialog", ao_dialogo)  # "sair da página?" ao descartar formulário
+        page.on("request", lambda r: (PEDIDOS.append((time.time(), r.method, r.url[-90:])), PEDIDOS[:-40] and PEDIDOS.__delitem__(slice(0, -40))))
         page.goto(HUB)
         if "/login" in page.url:
             input("Faça login na janela do navegador (inclusive validações) e tecle ENTER aqui... ")
