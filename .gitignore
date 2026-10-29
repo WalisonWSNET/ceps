@@ -15,3 +15,6 @@ auth.json
 # Credenciais do Google (conta de serviço): nunca versionar
 credenciais*.json
 *.json
+
+# Gravação do codegen (pode conter o login digitado)
+gravacao.py
