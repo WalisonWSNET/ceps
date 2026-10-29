@@ -358,6 +358,10 @@ JS_FECHAR = r"""el => {
 }"""
 
 
+DEPURAR = False
+ULTIMO_FECHAR = {}
+
+
 def painel_aberto(page):
     """O painel de endereço está aberto se o campo CEP dele (name='cep') está visível."""
     return page.locator("input[name='cep']").filter(visible=True).count() > 0
@@ -375,7 +379,18 @@ def fechar_formulario(page, dlg):
     """Fecha o painel 'Endereço de Cliente' SEM gravar. NÃO usa Esc (fecha a janela inteira do serviço).
     Usa sempre o MESMO elemento do painel (guardado antes), clica no X dele uma vez e só então tenta o Descartar."""
     painel = dlg.element_handle()
-    if painel.evaluate(JS_FECHAR) and esperar_fechar(page):
+    if DEPURAR:  # mostra o painel e os botões ANTES de fechar
+        LOGS.joinpath("telas").mkdir(parents=True, exist_ok=True)
+        foto = LOGS / "telas" / f"painel_antes_{datetime.now():%H%M%S}.png"
+        page.screenshot(path=str(foto))
+        print(f"   [depurar] captura do painel: {foto.name}")
+        for b in botoes_do_painel(dlg):
+            print("   [depurar] botão:", b)
+    retorno = painel.evaluate(JS_FECHAR)
+    ULTIMO_FECHAR["retorno"] = retorno
+    if DEPURAR:
+        print("   [depurar] o robô clicou em:", retorno)
+    if retorno and esperar_fechar(page):
         return
     if painel_aberto(page):
         try:
@@ -412,7 +427,7 @@ def ler_todos_enderecos(page):
                 titulos = page.evaluate(JS_TITULOS)
             except Exception:  # noqa: BLE001
                 titulos = []
-            raise ErroPulavel(f"janela_do_servico_fechou:tipo={tipo};lidos={list(todos)};captura={captura.name};"
+            raise ErroPulavel(f"janela_do_servico_fechou:tipo={tipo};lidos={list(todos)};x={ULTIMO_FECHAR.get('retorno')};captura={captura.name};"
                               f"titulos={json.dumps(titulos, ensure_ascii=False)[:300]}")
     return todos
 
@@ -893,6 +908,8 @@ def conferir_cartao(page, linha, args, tela):
 def executar(args):
     from playwright.sync_api import sync_playwright
 
+    global DEPURAR
+    DEPURAR = args.depurar
     todas = ler_linhas(args.csv)
     args.bairros = construir_bairros(todas)
     colunas = list(todas[0].keys()) if todas else []
@@ -1112,6 +1129,8 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--depurar", action="store_true",
+                    help="tira foto do painel de endereço e lista os botões antes de fechar (mais lento; para diagnóstico)")
     ap.add_argument("--aceitar-cep-atual", action="store_true",
                     help="com --id: se o Hub tem um CEP diferente do 'antigo' da planilha, parte dele (corrige CEP gravado errado) "
                          "e ignora a marca em 'feito' desses IDs")
