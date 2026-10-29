@@ -419,11 +419,10 @@ def esperar_fechar(page, ms=3000):
 
 
 def fechar_formulario(page, dlg):
-    """Fecha o painel 'Endereço de Cliente' SEM gravar. NÃO usa Esc (fecha a janela inteira do serviço).
-    Usa sempre o MESMO elemento do painel (guardado antes), clica no X dele uma vez e só então tenta o Descartar."""
+    """Fecha o painel 'Endereço de Cliente' SEM gravar. NUNCA usa Esc nem Descartar: os dois fecham a janela inteira do
+    serviço (a evidência mostrou a janela sumindo ~3,8 s depois do 1º clique no X: era o Descartar do plano B).
+    Se o X não fechar o painel (às vezes ele ainda está carregando e ignora o clique), clica no X de novo."""
     painel = dlg.element_handle()
-    # o painel faz uma verificação em segundo plano (aviso "endereço utilizado..."); fechar antes dela terminar
-    # parece fechar também a janela do serviço
     try:  # força o navegador a desenhar quadros e termina as animações do painel antes de fechar
         page.bring_to_front()
         page.screenshot(clip={"x": 0, "y": 0, "width": 2, "height": 2}, type="jpeg", quality=10)
@@ -437,20 +436,17 @@ def fechar_formulario(page, dlg):
         print(f"   [depurar] captura do painel: {foto.name}")
         for b in botoes_do_painel(dlg):
             print("   [depurar] botão:", b)
-    ULTIMO_FECHAR["t"] = time.time()
-    retorno = painel.evaluate(JS_FECHAR)
-    ULTIMO_FECHAR["retorno"] = retorno
-    if DEPURAR:
-        print("   [depurar] o robô clicou em:", retorno)
-    if retorno and esperar_fechar(page):
-        return
-    if painel_aberto(page):
-        try:
-            clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
-        except Exception:  # noqa: BLE001
-            pass
-        if esperar_fechar(page):
+    retorno = None
+    for tentativa in range(4):
+        ULTIMO_FECHAR["t"] = time.time()
+        retorno = painel.evaluate(JS_FECHAR)
+        ULTIMO_FECHAR["retorno"] = retorno
+        ULTIMO_FECHAR["tentativas"] = tentativa + 1
+        if DEPURAR:
+            print(f"   [depurar] o robô clicou em: {retorno} (tentativa {tentativa + 1})")
+        if retorno and esperar_fechar(page, 2000):
             return
+        page.wait_for_timeout(700)  # o painel ainda carrega: espera um pouco e clica de novo
     raise ErroPulavel("formulario_nao_fechou:botoes=" + json.dumps(botoes_do_painel(dlg), ensure_ascii=False)[:600])
 
 
@@ -827,10 +823,13 @@ def trocar_cep(page, dialogo, campos, mapa, novo):
         if depois_campos[i]["valor"].strip() != c["valor"].strip():
             dialogo.locator("input, textarea").nth(i).fill(c["valor"].strip())
     page.wait_for_timeout(300)  # confirma que o Hub não apaga de novo depois de recolocar
+    try:  # o Hub às vezes apaga de novo, atrasado: espera, relê e recoloca antes de desistir
+        garantir_formulario(page, dialogo, {i: c["valor"].strip() for i, c in guardar.items()})
+    except ErroPulavel:
+        faltou = faltas_no_formulario(dialogo, {i: c["valor"].strip() for i, c in guardar.items()})
+        rot = {i: c["rotulo"] for i, c in guardar.items()}
+        raise ErroPulavel(f"restauracao_falhou_{rot.get(faltou[0][0], 'campo') if faltou else 'campo'}")
     final_campos = {c["i"]: c for c in ler_campos(dialogo)}
-    for i, c in guardar.items():
-        if i not in final_campos or final_campos[i]["valor"].strip() != c["valor"].strip():
-            raise ErroPulavel(f"restauracao_falhou_{c['rotulo']}")
     if so_digitos(final_campos[mapa["cep"]["i"]]["valor"]) != novo:
         raise ErroPulavel("cep_nao_ficou_no_campo")
     return guardar, antes, depois, valores(list(final_campos.values()))
