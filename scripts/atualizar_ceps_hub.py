@@ -659,6 +659,67 @@ def gravar_endereco(page):
     return {"servico_antes_do_salvar": aviso_antes, "servico_visto": visto}
 
 
+def norm_campo(v):
+    return re.sub(r"\s+", " ", (v or "").strip()).casefold()  # o Hub pode salvar em MAIÚSCULAS
+
+
+def esperados_do_formulario(guardar, mesclado):
+    """Valor que cada campo guardado precisa ter na hora de gravar: o original, ou o mesclado (complemento/referência)."""
+    esp = {}
+    for i, c in guardar.items():
+        esperado = c["valor"].strip()
+        for chave in MESCLAR:
+            if mesclado and mapear([c]).get(chave):
+                esperado = mesclado[chave]
+        esp[i] = esperado
+    return esp
+
+
+def faltas_no_formulario(dialogo, esp):
+    conf = {c["i"]: c for c in ler_campos(dialogo)}
+    return [(i, esperado, conf[i]["valor"] if i in conf else None) for i, esperado in esp.items()
+            if i not in conf or norm_campo(conf[i]["valor"]) != norm_campo(esperado)]
+
+
+def garantir_formulario(page, dialogo, esp):
+    """Logo antes de gravar: o Hub às vezes apaga os campos DE NOVO, atrasado. Espera, relê e recoloca o que sumiu.
+    Devolve quantos campos precisou recolocar; levanta ErroPulavel se o formulário não firmar."""
+    recolocados = 0
+    esperar_estabilizar(page, dialogo, minimo_ms=1500)
+    for _ in range(4):
+        faltas = faltas_no_formulario(dialogo, esp)
+        if not faltas:
+            return recolocados
+        for i, esperado, _ in faltas:
+            dialogo.locator("input, textarea").nth(i).fill(esperado)
+        recolocados += len(faltas)
+        esperar_estabilizar(page, dialogo, minimo_ms=1000)
+    raise ErroPulavel("formulario_instavel_antes_de_gravar")
+
+
+def verificar_e_reparar(page, linha, cartao, esp):
+    """Depois de gravar: reabre o Cadastral e confere. Se faltar algo, REPARA uma vez (recoloca, grava, confere de novo).
+    Devolve (faltas_que_restaram, reparos, valores_lidos)."""
+    dialogo = abrir_dialogo_endereco(page, cartao)
+    esperar_estabilizar(page, dialogo, minimo_ms=800)
+    faltas = []
+    for _ in range(3):
+        faltas = faltas_no_formulario(dialogo, esp)
+        if not faltas:
+            return [], 0, valores(ler_campos(dialogo))
+        page.wait_for_timeout(1000)  # relê: pode ter sido pressa
+    for i, esperado, _ in faltas:
+        dialogo.locator("input, textarea").nth(i).fill(esperado)
+    page.wait_for_timeout(800)
+    restantes = faltas_no_formulario(dialogo, esp)
+    if restantes:
+        return restantes, 1, valores(ler_campos(dialogo))
+    gravar_endereco(page)
+    dialogo = abrir_dialogo_endereco(page, abrir_servico(page, linha))
+    esperar_estabilizar(page, dialogo, minimo_ms=800)
+    return faltas_no_formulario(dialogo, esp), 1, valores(ler_campos(dialogo))
+
+
 def trocar_cep(page, dialogo, campos, mapa, novo):
     """Troca o CEP e recoloca tudo que o Hub apagou. Devolve (guardados, antes, depois, final)."""
     guardar = {c["i"]: c for c in campos if not derivado(c)}  # tudo que o CEP não preenche sozinho
@@ -707,8 +768,10 @@ def processar(page, linha, args, tela):
 
     abrir_aba_enderecos(page, cartao)
     mesclado = None
+    todos_lidos = None
     if args.ler_todos_enderecos or not enderecos_iguais(page):  # diferem (ex.: só um tem complemento)
-        mesclado = mesclar_enderecos(ler_todos_enderecos(page, lambda: abrir_aba_enderecos(page, abrir_servico(page, linha))))
+        todos_lidos = ler_todos_enderecos(page, lambda: abrir_aba_enderecos(page, abrir_servico(page, linha)))
+        mesclado = mesclar_enderecos(todos_lidos)
     dialogo = abrir_linha_cadastral(page)
     esperar_estabilizar(page, dialogo, minimo_ms=600)  # o formulário pode terminar de carregar depois de abrir
     campos = ler_campos(dialogo)
@@ -773,6 +836,12 @@ def processar(page, linha, args, tela):
         detalhes["reaberturas"] = REABERTURAS[0]
     if mesclado:
         detalhes["mesclado"] = mesclado
+    if todos_lidos:  # tudo o que havia nos 4 endereços, para dar para reconstruir qualquer caso
+        detalhes["enderecos_antes"] = {t: valores(cs) for t, cs in todos_lidos.items()}
+    esp = esperados_do_formulario(guardar, mesclado)
+    recolocados = garantir_formulario(page, dialogo, esp)
+    if recolocados:
+        detalhes["recolocados_antes_de_gravar"] = recolocados
     if not args.gravar:
         tela.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(tela / f"{idcs}_simulacao.png"))
@@ -786,28 +855,16 @@ def processar(page, linha, args, tela):
     if cep_do_cartao(cartao) != novo:
         raise ErroPulavel("verificacao_cep_nao_confere")
     if args.verificacao == "completa":
-        dialogo = abrir_dialogo_endereco(page, cartao)
-        esperar_estabilizar(page, dialogo, minimo_ms=800)  # o formulário pode terminar de carregar depois de abrir
-        norm = lambda v: re.sub(r"\s+", " ", (v or "").strip()).casefold()  # o Hub pode salvar em MAIÚSCULAS
-        for tentativa in range(3):
-            conf = {c["i"]: c for c in ler_campos(dialogo)}
-            faltas = []
-            for i, c in guardar.items():
-                esperado = c["valor"].strip()
-                for chave in MESCLAR:
-                    if mesclado and mapear([c]).get(chave):
-                        esperado = mesclado[chave]
-                achado = conf[i]["valor"] if i in conf else None
-                if achado is None or norm(achado) != norm(esperado):
-                    faltas.append((c["rotulo"], esperado, achado))
-            if not faltas:
-                break
-            page.wait_for_timeout(1000)  # relê: pode ter sido pressa
-        detalhes["conferido"] = valores(list(conf.values()))
+        faltas, reparos, lidos = verificar_e_reparar(page, linha, cartao, esp)
+        detalhes["conferido"] = lidos
+        if reparos:
+            detalhes["reparos"] = reparos
         if faltas:
-            # o endereço JÁ foi gravado: guarda tudo no log para dar para conferir/corrigir à mão
-            raise ErroPulavel(f"verificacao_{faltas[0][0]}_nao_confere:" + json.dumps(
-                {"divergencias": faltas, "antes": antes, "mesclado": mesclado}, ensure_ascii=False)[:1500])
+            # o endereço JÁ foi gravado: guarda tudo no log para dar para corrigir à mão
+            rot = {i: c["rotulo"] for i, c in guardar.items()}
+            raise ErroPulavel(f"verificacao_{rot.get(faltas[0][0], 'campo')}_nao_confere:" + json.dumps(
+                {"divergencias": [(rot.get(i), e, a) for i, e, a in faltas], "antes": antes,
+                 "mesclado": mesclado, "enderecos_antes": detalhes.get("enderecos_antes")}, ensure_ascii=False)[:2500])
     marca("verificacao")
     return "ok", detalhes
 
