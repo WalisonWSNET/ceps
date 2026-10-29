@@ -402,12 +402,15 @@ def fechar_formulario(page, dlg):
     raise ErroPulavel("formulario_nao_fechou:botoes=" + json.dumps(botoes_do_painel(dlg), ensure_ascii=False)[:600])
 
 
-def ler_todos_enderecos(page):
-    """Abre o formulário de cada tipo de endereço, lê os campos e DESCARTA (nada é gravado)."""
-    linhas = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO)
-    n = linhas.count()
-    todos = {}
-    for i in range(n):
+REABERTURAS = [0]  # quantas vezes a janela do serviço sumiu e foi reaberta no cliente atual
+
+
+def ler_todos_enderecos(page, reabrir=None):
+    """Abre o formulário de cada tipo de endereço, lê os campos e fecha SEM gravar.
+    Se a janela do serviço sumir ao fechar um painel, chama `reabrir()` (volta ao serviço/aba Endereços) e segue."""
+    n = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).count()
+    todos, i = {}, 0
+    while i < n:
         linha = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).nth(i)
         m = TIPOS_ENDERECO.search(linha.inner_text())
         tipo = m.group(0).lower() if m else f"linha{i}"
@@ -420,15 +423,21 @@ def ler_todos_enderecos(page):
         try:  # a lista volta a aparecer quando o painel fecha; se não voltar, a janela do serviço foi fechada
             page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).first.wait_for(timeout=5000)
         except Exception:  # noqa: BLE001
-            LOGS.joinpath("telas").mkdir(parents=True, exist_ok=True)
-            captura = LOGS / "telas" / f"janela_fechou_{datetime.now():%H%M%S}.png"
-            try:
-                page.screenshot(path=str(captura))
-                titulos = page.evaluate(JS_TITULOS)
-            except Exception:  # noqa: BLE001
-                titulos = []
-            raise ErroPulavel(f"janela_do_servico_fechou:tipo={tipo};lidos={list(todos)};x={ULTIMO_FECHAR.get('retorno')};captura={captura.name};"
-                              f"titulos={json.dumps(titulos, ensure_ascii=False)[:300]}")
+            if reabrir and REABERTURAS[0] < 4:
+                REABERTURAS[0] += 1
+                print(f"   a janela do serviço fechou depois do endereço '{tipo}'; reabrindo ({REABERTURAS[0]})")
+                reabrir()
+            else:
+                LOGS.joinpath("telas").mkdir(parents=True, exist_ok=True)
+                captura = LOGS / "telas" / f"janela_fechou_{datetime.now():%H%M%S}.png"
+                try:
+                    page.screenshot(path=str(captura))
+                    titulos = page.evaluate(JS_TITULOS)
+                except Exception:  # noqa: BLE001
+                    titulos = []
+                raise ErroPulavel(f"janela_do_servico_fechou:tipo={tipo};lidos={list(todos)};x={ULTIMO_FECHAR.get('retorno')};"
+                                  f"captura={captura.name};titulos={json.dumps(titulos, ensure_ascii=False)[:300]}")
+        i += 1
     return todos
 
 
@@ -673,6 +682,7 @@ def processar(page, linha, args, tela):
     idcs = so_digitos(linha["id_cliente_servico"])
     antigo, novo = so_digitos(linha["cep"]), so_digitos(linha["cep_novo"])
     OBSERVACOES_LIDAS.clear()
+    REABERTURAS[0] = 0
     FASES.clear()
     marca("inicio")
     cartao = abrir_servico(page, linha)
@@ -690,7 +700,7 @@ def processar(page, linha, args, tela):
     abrir_aba_enderecos(page, cartao)
     mesclado = None
     if args.ler_todos_enderecos or not enderecos_iguais(page):  # diferem (ex.: só um tem complemento)
-        mesclado = mesclar_enderecos(ler_todos_enderecos(page))
+        mesclado = mesclar_enderecos(ler_todos_enderecos(page, lambda: abrir_aba_enderecos(page, abrir_servico(page, linha))))
     dialogo = abrir_linha_cadastral(page)
     esperar_estabilizar(page, dialogo, minimo_ms=600)  # o formulário pode terminar de carregar depois de abrir
     campos = ler_campos(dialogo)
@@ -751,6 +761,8 @@ def processar(page, linha, args, tela):
 
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
     detalhes["rua_bairro"] = info_div
+    if REABERTURAS[0]:
+        detalhes["reaberturas"] = REABERTURAS[0]
     if mesclado:
         detalhes["mesclado"] = mesclado
     if not args.gravar:
