@@ -382,7 +382,8 @@ JS_INIT = r"""(() => {
   window.__remocoes = [];
   const reg = (n, via) => { try {
     if (n && n.nodeType === 1 && (n.tagName === 'MD-DIALOG' || (n.querySelector && n.querySelector('md-dialog'))))
-      window.__remocoes.push({t: Date.now(), via, tag: n.tagName,
+      window.__remocoes.push({t: Date.now(), via, tag: n.tagName, cls: String(n.className || '').slice(0, 60),
+        txt: (n.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 50),
         stack: new Error().stack.split('\n').slice(2, 10).map(s => s.trim().slice(0, 150))});
   } catch (e) {} };
   const rc = Node.prototype.removeChild;
@@ -469,6 +470,9 @@ def evidencia(page):
         for t, status, url in RESPOSTAS:
             if abs(t - t_rem) <= 1.5:
                 print(f"        {t - t_rem:+.2f} s  {status}  ...{url}")
+        for r in remocoes[-4:]:
+            print(f"   [evidência] removido {r['t'] / 1000.0 - (t_clique or r['t'] / 1000.0):+.2f} s do clique: {r.get('tag')} "
+                  f"classe={r.get('cls')!r} texto={r.get('txt')!r}")
         print("   [evidência] remoção de", remocoes[-1].get("tag"), "via", remocoes[-1].get("via"), "; pilha:")
         for linha in remocoes[-1].get("stack", [])[:7]:
             print("        ", linha)
@@ -862,7 +866,8 @@ def processar(page, linha, args, tela):
     abrir_aba_enderecos(page, cartao)
     mesclado = None
     todos_lidos = None
-    if args.ler_todos_enderecos or not enderecos_iguais(page):  # diferem (ex.: só um tem complemento)
+    lista_igual = enderecos_iguais(page)
+    if args.ler_todos_enderecos or not lista_igual:  # diferem (ex.: só um tem complemento)
         # o Cadastral fica de fora: o robô abre o painel dele para editar, e fechar esse painel sem gravar derruba a janela
         todos_lidos = ler_todos_enderecos(page, lambda: reabrir_rapido(page, linha), ignorar=("cadastral",))
     dialogo = abrir_linha_cadastral(page)
@@ -930,6 +935,7 @@ def processar(page, linha, args, tela):
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
     detalhes["rua_bairro"] = info_div
     detalhes["espera_status_conexao_s"] = STATUS_CONEXAO_S[0]
+    detalhes["lista_dos_4_igual"] = lista_igual
     if REABERTURAS[0]:
         detalhes["reaberturas"] = REABERTURAS[0]
     if mesclado:
@@ -1282,6 +1288,40 @@ def resumo(args):
           f"com complemento/referência mesclados: {mesclados} (em conflito, deixados em branco: {conflitos})")
     for (a_, d_, k_), n_ in pares.most_common(10):
         print(f"   bairro {a_} -> {d_} ({k_} km): {n_}")
+    lidos4 = dif_comp = dif_ref = dif_outro = 0
+    exemplos = []
+    fontes = list(ultimo.values())
+    if LOG_SIMULACAO.exists():  # o levantamento também vale com o que foi lido nas simulações
+        sim = {}
+        with open(LOG_SIMULACAO, encoding="utf-8", newline="") as f:
+            for r in csv.DictReader(f):
+                sim[r["id_cliente_servico"]] = r
+        vistos = {r["id_cliente_servico"] for r in fontes}
+        fontes += [r for i, r in sim.items() if i not in vistos]
+    for r in fontes:
+        det = json.loads(r["detalhes"] or "{}")
+        ea = det.get("enderecos_antes")
+        if not ea or len(ea) < 2:
+            continue
+        lidos4 += 1
+
+        def conj(rx):
+            return {re.sub(r"\s+", " ", v).strip().casefold() for t in ea.values()
+                    for k, v in t.items() if re.search(rx, k, re.I) and (v or "").strip()}
+
+        def varia(rx):  # preenchido em alguns tipos e vazio/diferente em outros
+            vals = [next((v.strip() for k, v in t.items() if re.search(rx, k, re.I)), "") for t in ea.values()]
+            return len({re.sub(r"\s+", " ", v).casefold() for v in vals}) > 1
+        c, f = varia(r"Complemento"), varia(r"Refer")
+        dif_comp += c
+        dif_ref += f
+        if c or f:
+            exemplos.append((r["id_cliente_servico"], "complemento" if c else "", "referência" if f else ""))
+    if lidos4:
+        print(f"Clientes com os 4 endereços lidos: {lidos4}; com COMPLEMENTO diferente entre os tipos: {dif_comp}; "
+              f"com REFERÊNCIA diferente entre os tipos: {dif_ref}")
+        for e in exemplos[:6]:
+            print("   serviço", e[0], "difere em:", ", ".join(x for x in e[1:] if x))
     pendentes = [r for r in ultimo.values() if r["status"] not in FEITOS]
     if pendentes:
         with open(LOGS / "pendentes.csv", "w", encoding="utf-8", newline="") as f:
