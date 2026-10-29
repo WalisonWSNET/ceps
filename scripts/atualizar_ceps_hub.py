@@ -320,24 +320,55 @@ def enderecos_iguais(page):
                 for t in textos}) <= 1
 
 
-def fechar_formulario(page):
-    """Fecha o formulário de endereço SEM gravar: Descartar, depois Esc, depois o X (o Descartar nem sempre fecha)."""
+JS_BOTOES = r"""el => {
+  const topo = el.getBoundingClientRect().top;
+  return [...el.querySelectorAll('button, [role=button], md-icon, a')].map(e => {
+    const r = e.getBoundingClientRect();
+    return {tag: e.tagName.toLowerCase(), aria: e.getAttribute('aria-label') || '', titulo: e.getAttribute('title') || '',
+            classe: (e.className && e.className.baseVal === undefined ? e.className : '').toString().slice(0, 50),
+            texto: (e.innerText || '').trim().slice(0, 25), visivel: !!(e.offsetWidth || e.offsetHeight),
+            dy: Math.round(r.top - topo), dx: Math.round(r.left)};
+  }).filter(b => b.visivel);
+}"""
+FECHAR = re.compile(r"close|fechar|clear|cancel", re.I)
+
+
+def botoes_do_painel(dlg):
+    return dlg.evaluate(JS_BOTOES)
+
+
+def fechar_formulario(page, dlg):
+    """Fecha o painel 'Endereço de Cliente' SEM gravar. NÃO usa Esc (fecha a janela inteira do serviço).
+    Tenta o X do próprio painel (botão do cabeçalho com close/fechar) e, se não fechar, o Descartar."""
     titulo = page.get_by_text(re.compile(r"Endere[çc]o de Cliente")).filter(visible=True)
-    for acao in ("descartar", "esc", "x"):
-        try:
-            if acao == "descartar":
-                clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
-            elif acao == "esc":
-                page.keyboard.press("Escape")
-            else:
-                page.get_by_role("button", name="Close dialog").last.click(timeout=3000)
-        except Exception:  # noqa: BLE001 - tenta a próxima forma de fechar
-            pass
+
+    def fechou():
         for _ in range(8):  # ~2 s
             if titulo.count() == 0:
-                return
+                return True
             page.wait_for_timeout(250)
-    raise ErroPulavel("formulario_nao_fechou")
+        return False
+
+    for loc in (
+        dlg.locator("[aria-label*='close' i], [aria-label*='fechar' i], [title*='close' i], [title*='fechar' i]"),
+        dlg.get_by_role("button", name=FECHAR),
+        dlg.locator("button, [role=button], md-icon, a").filter(has_text=re.compile(r"^\s*(close|clear)\s*$", re.I)),
+    ):
+        try:
+            loc = loc.filter(visible=True)
+            if loc.count():
+                loc.last.click(timeout=3000)
+                if fechou():
+                    return
+        except Exception:  # noqa: BLE001 - tenta a próxima forma
+            pass
+    try:
+        clicar_texto(page, r"^\s*Descartar\s*$", "descartar")
+    except Exception:  # noqa: BLE001
+        pass
+    if fechou():
+        return
+    raise ErroPulavel("formulario_nao_fechou:botoes=" + json.dumps(botoes_do_painel(dlg), ensure_ascii=False)[:600])
 
 
 def ler_todos_enderecos(page):
@@ -353,7 +384,7 @@ def ler_todos_enderecos(page):
         dlg = achar_formulario(page)
         esperar_estabilizar(page, dlg, minimo_ms=600)
         todos[tipo] = ler_campos(dlg)
-        fechar_formulario(page)
+        fechar_formulario(page, dlg)
     return todos
 
 
@@ -626,6 +657,9 @@ def processar(page, linha, args, tela):
         page.screenshot(path=str(tela / f"{idcs}_dialogo.png"))
         print(json.dumps(campos, ensure_ascii=False, indent=2))
         print("Campos reconhecidos:", {k: v["rotulo"] for k, v in mapa.items()})
+        print("Botões do painel (dy = distância do topo):")
+        for b in botoes_do_painel(dialogo):
+            print("   ", b)
         return "inspecionado", {"campos": campos}
 
     faltando = [k for k in OBRIGATORIOS if k not in mapa]
