@@ -150,7 +150,7 @@ def carregar_pulados():
     with open(LOG_GRAVACAO, encoding="utf-8", newline="") as f:
         for r in csv.DictReader(f):
             ultimo[r["id_cliente_servico"]] = r["status"]
-    return {i for i, st in ultimo.items() if st in PULADOS or st.startswith(("enderecos_diferentes", "enderecos_conflito"))}
+    return {i for i, st in ultimo.items() if st in PULADOS or st.startswith(("enderecos_diferentes", "enderecos_conflito", "verificacao_"))}
 
 
 def registrar(arquivo, linha, status, detalhes=None):
@@ -380,6 +380,13 @@ def fechar_formulario(page, dlg):
     """Fecha o painel 'Endereço de Cliente' SEM gravar. NÃO usa Esc (fecha a janela inteira do serviço).
     Usa sempre o MESMO elemento do painel (guardado antes), clica no X dele uma vez e só então tenta o Descartar."""
     painel = dlg.element_handle()
+    # o painel faz uma verificação em segundo plano (aviso "endereço utilizado..."); fechar antes dela terminar
+    # parece fechar também a janela do serviço
+    page.wait_for_timeout(1200)
+    try:
+        page.wait_for_load_state("networkidle", timeout=2500)
+    except Exception:  # noqa: BLE001
+        pass
     if DEPURAR:  # mostra o painel e os botões ANTES de fechar
         LOGS.joinpath("telas").mkdir(parents=True, exist_ok=True)
         foto = LOGS / "telas" / f"painel_antes_{datetime.now():%H%M%S}.png"
@@ -780,15 +787,27 @@ def processar(page, linha, args, tela):
         raise ErroPulavel("verificacao_cep_nao_confere")
     if args.verificacao == "completa":
         dialogo = abrir_dialogo_endereco(page, cartao)
-        conf = {c["i"]: c for c in ler_campos(dialogo)}
+        esperar_estabilizar(page, dialogo, minimo_ms=800)  # o formulário pode terminar de carregar depois de abrir
+        norm = lambda v: re.sub(r"\s+", " ", (v or "").strip()).casefold()  # o Hub pode salvar em MAIÚSCULAS
+        for tentativa in range(3):
+            conf = {c["i"]: c for c in ler_campos(dialogo)}
+            faltas = []
+            for i, c in guardar.items():
+                esperado = c["valor"].strip()
+                for chave in MESCLAR:
+                    if mesclado and mapear([c]).get(chave):
+                        esperado = mesclado[chave]
+                achado = conf[i]["valor"] if i in conf else None
+                if achado is None or norm(achado) != norm(esperado):
+                    faltas.append((c["rotulo"], esperado, achado))
+            if not faltas:
+                break
+            page.wait_for_timeout(1000)  # relê: pode ter sido pressa
         detalhes["conferido"] = valores(list(conf.values()))
-        for i, c in guardar.items():
-            esperado = c["valor"].strip()
-            for chave in MESCLAR:
-                if mesclado and mapear([c]).get(chave):
-                    esperado = mesclado[chave]
-            if i not in conf or conf[i]["valor"].strip() != esperado:
-                raise ErroPulavel(f"verificacao_{c['rotulo']}_nao_confere")
+        if faltas:
+            # o endereço JÁ foi gravado: guarda tudo no log para dar para conferir/corrigir à mão
+            raise ErroPulavel(f"verificacao_{faltas[0][0]}_nao_confere:" + json.dumps(
+                {"divergencias": faltas, "antes": antes, "mesclado": mesclado}, ensure_ascii=False)[:1500])
     marca("verificacao")
     return "ok", detalhes
 
