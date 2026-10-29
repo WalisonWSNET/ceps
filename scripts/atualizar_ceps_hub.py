@@ -257,6 +257,39 @@ def aguardar_cliente(page):
     raise ErroPulavel("consulta_sem_resposta")
 
 
+def localizar_cartao(page, idcs, tentativas=12):
+    """Acha, na lista de serviços que está na tela, o cartão do serviço com este ID."""
+    cartao = (
+        page.locator("div")
+        .filter(has_text=re.compile(rf"ID Cliente Serviço:\s*{idcs}(?!\d)"))
+        .filter(has=page.get_by_role("button", name="Outras Opções"))
+    )
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    for tentativa in range(tentativas):
+        fechar_observacoes(page)
+        try:
+            cartao.first.wait_for(state="attached", timeout=1000)  # os cartões carregam aos poucos
+            break
+        except PWTimeout:
+            if tentativa == tentativas - 1:
+                ids = re.findall(r"ID Cliente Serviço:\s*(\d+)", page.inner_text("body"))
+                raise ErroPulavel("servico_nao_encontrado:ids_na_tela=" + ",".join(ids[:10]))
+    cartao = cartao.last  # o contêiner mais interno que tem o ID e o botão
+    if cartao.get_by_role("button", name="Outras Opções").count() != 1:
+        raise ErroPulavel("cartao_ambiguo")
+    return cartao
+
+
+def reabrir_rapido(page, linha):
+    """A janela do serviço sumiu: tenta reabrir a partir do cartão que já está na tela (sem refazer a consulta)."""
+    try:
+        cartao = localizar_cartao(page, so_digitos(linha["id_cliente_servico"]), tentativas=3)
+    except Exception:  # noqa: BLE001 - a lista não está mais na tela: refaz tudo
+        cartao = abrir_servico(page, linha)
+    abrir_aba_enderecos(page, cartao)
+
+
 def abrir_servico(page, linha):
     """Consulta o cliente, abre a lista de serviços e devolve o cartão do serviço certo."""
     from playwright.sync_api import expect  # noqa: F401
@@ -281,26 +314,7 @@ def abrir_servico(page, linha):
 
     page.get_by_text(re.compile("ID Cliente Serviço")).first.wait_for()
     fechar_observacoes(page, espera_ms=1200)  # o aviso costuma aparecer logo após a lista carregar
-    cartao = (
-        page.locator("div")
-        .filter(has_text=re.compile(rf"ID Cliente Serviço:\s*{idcs}(?!\d)"))
-        .filter(has=page.get_by_role("button", name="Outras Opções"))
-    )
-    from playwright.sync_api import TimeoutError as PWTimeout
-
-    for tentativa in range(12):
-        fechar_observacoes(page)
-        try:
-            cartao.first.wait_for(state="attached", timeout=1000)  # os cartões carregam aos poucos
-            break
-        except PWTimeout:
-            if tentativa == 11:
-                ids = re.findall(r"ID Cliente Serviço:\s*(\d+)", page.inner_text("body"))
-                raise ErroPulavel("servico_nao_encontrado:ids_na_tela=" + ",".join(ids[:10]))
-    cartao = cartao.last  # o contêiner mais interno que tem o ID e o botão
-    if cartao.get_by_role("button", name="Outras Opções").count() != 1:
-        raise ErroPulavel("cartao_ambiguo")
-    return cartao
+    return localizar_cartao(page, idcs)
 
 
 def cep_do_cartao(cartao):
@@ -409,11 +423,6 @@ def fechar_formulario(page, dlg):
     painel = dlg.element_handle()
     # o painel faz uma verificação em segundo plano (aviso "endereço utilizado..."); fechar antes dela terminar
     # parece fechar também a janela do serviço
-    page.wait_for_timeout(1200)
-    try:
-        page.wait_for_load_state("networkidle", timeout=2500)
-    except Exception:  # noqa: BLE001
-        pass
     try:  # força o navegador a desenhar quadros e termina as animações do painel antes de fechar
         page.bring_to_front()
         page.screenshot(clip={"x": 0, "y": 0, "width": 2, "height": 2}, type="jpeg", quality=10)
@@ -590,7 +599,25 @@ def avaliar_divergencia(antes, depois, cidade_planilha, bairros, perto_km=3.0, r
     return None, info
 
 
+STATUS_CONEXAO_S = [0.0]
+
+
+def esperar_status_conexao(page, cartao, max_s=10):
+    """A etiqueta 'CONECTADO HÁ ...' do cartão chega por uma consulta lenta; quando chega, o Hub redesenha a lista de
+    serviços e destrói a janela que estiver aberta. Por isso esperamos ela carregar ANTES de abrir a janela."""
+    t0 = time.time()
+    while time.time() - t0 < max_s:
+        try:
+            if re.search(r"CONECTAD", cartao.inner_text(), re.I):
+                break
+        except Exception:  # noqa: BLE001
+            pass
+        page.wait_for_timeout(300)
+    STATUS_CONEXAO_S[0] = round(time.time() - t0, 1)
+
+
 def abrir_aba_enderecos(page, cartao):
+    esperar_status_conexao(page, cartao)
     JANELA_ABERTA_EM[0] = time.time()
     fechar_observacoes(page)
     cartao.get_by_role("button", name="Outras Opções").click()
@@ -823,7 +850,7 @@ def processar(page, linha, args, tela):
     mesclado = None
     todos_lidos = None
     if args.ler_todos_enderecos or not enderecos_iguais(page):  # diferem (ex.: só um tem complemento)
-        todos_lidos = ler_todos_enderecos(page, lambda: abrir_aba_enderecos(page, abrir_servico(page, linha)))
+        todos_lidos = ler_todos_enderecos(page, lambda: reabrir_rapido(page, linha))
         mesclado = mesclar_enderecos(todos_lidos)
     dialogo = abrir_linha_cadastral(page)
     esperar_estabilizar(page, dialogo, minimo_ms=600)  # o formulário pode terminar de carregar depois de abrir
@@ -885,6 +912,7 @@ def processar(page, linha, args, tela):
 
     detalhes = {"antes": antes, "apos_trocar_cep": depois, "final": final}
     detalhes["rua_bairro"] = info_div
+    detalhes["espera_status_conexao_s"] = STATUS_CONEXAO_S[0]
     if REABERTURAS[0]:
         detalhes["reaberturas"] = REABERTURAS[0]
     if mesclado:
