@@ -376,6 +376,7 @@ JS_FECHAR = r"""el => {
 DEPURAR = False
 ULTIMO_FECHAR = {}
 PEDIDOS = []        # (instante, método, url) dos últimos pedidos de rede do Hub
+RESPOSTAS = []      # (instante, status, url) das últimas respostas de rede do Hub
 JANELA_ABERTA_EM = [0.0]
 JS_INIT = r"""(() => {
   window.__remocoes = [];
@@ -436,6 +437,7 @@ def fechar_formulario(page, dlg):
         print(f"   [depurar] captura do painel: {foto.name}")
         for b in botoes_do_painel(dlg):
             print("   [depurar] botão:", b)
+    ULTIMO_FECHAR["t"] = time.time()
     retorno = painel.evaluate(JS_FECHAR)
     ULTIMO_FECHAR["retorno"] = retorno
     if DEPURAR:
@@ -453,19 +455,27 @@ def fechar_formulario(page, dlg):
 
 
 def evidencia(page):
-    """Registra o que aconteceu quando a janela do serviço sumiu: há quanto tempo abriu, quem a removeu e os pedidos recentes."""
+    """Registra o que aconteceu quando a janela do serviço sumiu: há quanto tempo abriu, quanto depois do meu clique
+    no X ela foi removida, quais respostas de rede chegaram logo antes e quem a removeu."""
     agora = time.time()
     try:
         remocoes = page.evaluate("window.__remocoes || []")
     except Exception:  # noqa: BLE001
         remocoes = []
-    print(f"   [evidência] a janela estava aberta havia {agora - JANELA_ABERTA_EM[0]:.1f} s")
-    for r in remocoes[-2:]:
-        print(f"   [evidência] remoção de {r.get('tag')} via {r.get('via')}; pilha:")
-        for linha in r.get("stack", [])[:7]:
+    t_clique = ULTIMO_FECHAR.get("t")
+    print(f"   [evidência] janela aberta há {agora - JANELA_ABERTA_EM[0]:.1f} s; etiqueta de conexão levou {STATUS_CONEXAO_S[0]} s")
+    if remocoes:
+        t_rem = remocoes[-1]["t"] / 1000.0
+        if t_clique:
+            print(f"   [evidência] a janela foi removida {t_rem - t_clique:+.2f} s em relação ao meu clique no X "
+                  f"(negativo = ANTES do clique; clique há {agora - t_clique:.1f} s)")
+        print(f"   [evidência] respostas de rede perto da remoção (±1,5 s):")
+        for t, status, url in RESPOSTAS:
+            if abs(t - t_rem) <= 1.5:
+                print(f"        {t - t_rem:+.2f} s  {status}  ...{url}")
+        print("   [evidência] remoção de", remocoes[-1].get("tag"), "via", remocoes[-1].get("via"), "; pilha:")
+        for linha in remocoes[-1].get("stack", [])[:7]:
             print("        ", linha)
-    for t, metodo, url in PEDIDOS[-8:]:
-        print(f"   [evidência] pedido há {agora - t:.1f} s: {metodo} ...{url}")
 
 
 REABERTURAS = [0]  # quantas vezes a janela do serviço sumiu e foi reaberta no cliente atual
@@ -618,6 +628,7 @@ def esperar_status_conexao(page, cartao, max_s=10):
 
 def abrir_aba_enderecos(page, cartao):
     esperar_status_conexao(page, cartao)
+    marca("espera_status")
     JANELA_ABERTA_EM[0] = time.time()
     fechar_observacoes(page)
     cartao.get_by_role("button", name="Outras Opções").click()
@@ -1142,6 +1153,7 @@ def executar(args):
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.set_default_timeout(20000)
         page.on("dialog", ao_dialogo)  # "sair da página?" ao descartar formulário
+        page.on("response", lambda r: (RESPOSTAS.append((time.time(), r.status, r.url[-70:])), RESPOSTAS[:-60] and RESPOSTAS.__delitem__(slice(0, -60))))
         page.on("request", lambda r: (PEDIDOS.append((time.time(), r.method, r.url[-90:])), PEDIDOS[:-40] and PEDIDOS.__delitem__(slice(0, -40))))
         page.goto(HUB)
         if "/login" in page.url:
