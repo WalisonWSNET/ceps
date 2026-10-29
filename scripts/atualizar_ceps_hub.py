@@ -615,7 +615,7 @@ def avaliar_divergencia(antes, depois, cidade_planilha, bairros, perto_km=3.0, r
 STATUS_CONEXAO_S = [0.0]
 
 
-def esperar_status_conexao(page, cartao, max_s=10):
+def esperar_status_conexao(page, cartao, max_s=2):
     """A etiqueta 'CONECTADO HÁ ...' do cartão chega por uma consulta lenta; quando chega, o Hub redesenha a lista de
     serviços e destrói a janela que estiver aberta. Por isso esperamos ela carregar ANTES de abrir a janela."""
     t0 = time.time()
