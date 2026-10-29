@@ -591,7 +591,10 @@ def processar(page, linha, args, tela):
     if atual == novo:
         return "ja_atualizado", {"cep_cartao": atual}
     if atual != antigo:
-        return "cep_divergente", {"cep_cartao": atual, "cep_planilha": antigo}
+        if args.aceitar_cep_atual and args.id and atual:  # corrigir um CEP gravado errado: parte do que está no Hub
+            antigo = atual
+        else:
+            return "cep_divergente", {"cep_cartao": atual, "cep_planilha": antigo}
 
     abrir_aba_enderecos(page, cartao)
     mesclado = None
@@ -816,7 +819,8 @@ def executar(args):
             print(f"   valores vistos na coluna: {sorted({(r[chave] or '').strip() for r in todas})[:5]}")
     else:
         print(f"AVISO: coluna '{args.coluna_check}' não encontrada; linhas já feitas NÃO serão ignoradas. Colunas: {colunas}")
-    linhas = selecionar(todas, set(map(so_digitos, args.id)) if args.id else None, args.coluna_check)
+    linhas = selecionar(todas, set(map(so_digitos, args.id)) if args.id else None,
+                        "" if (args.aceitar_cep_atual and args.id) else args.coluna_check)  # "" = ignora a marca em feito
     if args.conferir_marcados:  # só leitura: confere no Hub os serviços já marcados como feitos
         ja = carregar_conferidos()
         linhas = [r for r in todas if marcado(r, args.coluna_check) and so_digitos(r.get("id_cliente_servico"))
@@ -1023,6 +1027,9 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--aceitar-cep-atual", action="store_true",
+                    help="com --id: se o Hub tem um CEP diferente do 'antigo' da planilha, parte dele (corrige CEP gravado errado) "
+                         "e ignora a marca em 'feito' desses IDs")
     ap.add_argument("--conferir-marcados", action="store_true",
                     help="só leitura: confere no Hub o CEP dos serviços já marcados em 'feito' (log em logs/conferencia.csv)")
     ap.add_argument("--ler-todos-enderecos", action="store_true",
