@@ -826,23 +826,43 @@ def executar(args):
     funcao = conferir_cartao if args.conferir_marcados else processar
     tela = LOGS / "telas"
 
-    with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(PERFIL), channel="chrome", headless=False, viewport={"width": 1366, "height": 900},
-            # com a tela bloqueada o Chrome trata a janela como oculta e fica bem mais lento
-            args=["--disable-features=CalculateNativeWinOcclusion", "--disable-backgrounding-occluded-windows",
-                  "--disable-renderer-backgrounding", "--disable-background-timer-throttling"])
+    def abrir(p):
+        perfil = PERFIL if args.navegador == "chrome" else Path(".perfil_chromium")
+        opcoes = dict(headless=False, viewport={"width": 1366, "height": 900},
+                      # com a tela bloqueada o Chrome trata a janela como oculta e fica bem mais lento
+                      args=["--disable-features=CalculateNativeWinOcclusion", "--disable-backgrounding-occluded-windows",
+                            "--disable-renderer-backgrounding", "--disable-background-timer-throttling"])
+        if args.navegador == "chrome":
+            opcoes["channel"] = "chrome"
+        ctx = p.chromium.launch_persistent_context(str(perfil), **opcoes)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.set_default_timeout(20000)
         page.on("dialog", lambda d: d.accept())  # "sair da página?" ao descartar formulário
         page.goto(HUB)
         if "/login" in page.url:
             input("Faça login na janela do navegador (inclusive validações) e tecle ENTER aqui... ")
+        return ctx, page
+
+    with sync_playwright() as p:
+        ctx, page = abrir(p)
         erros_seguidos = alarmes = sem_feito = 0
         for n, linha in enumerate(fila, 1):
             idcs = so_digitos(linha["id_cliente_servico"])
+            if n > 1 and args.reiniciar and (n - 1) % args.reiniciar == 0:  # evita o navegador travar em rodadas longas
+                print(f"   reiniciando o navegador (a cada {args.reiniciar} clientes)")
+                ctx.close()
+                ctx, page = abrir(p)
             try:
-                status, det = funcao(page, linha, args, tela)
+                try:
+                    status, det = funcao(page, linha, args, tela)
+                except Exception as e0:  # noqa: BLE001
+                    if "closed" not in str(e0).lower():
+                        raise
+                    # navegador fechou/travou no meio: reabre e refaz este cliente (a gravação só vale depois do
+                    # "Atualizar Todos", e um cliente já atualizado vira ja_atualizado)
+                    print("   o navegador fechou; reabrindo e tentando este cliente de novo")
+                    ctx, page = abrir(p)
+                    status, det = funcao(page, linha, args, tela)
                 erros_seguidos = 0
             except ErroPulavel as e:
                 status, _, info = str(e).partition(":")
@@ -972,6 +992,10 @@ def main(argv=None):
                     help="bairros a até X km (entre os centros) contam como próximos (padrão 3)")
     ap.add_argument("--rua-parecida", type=float, default=0.6,
                     help="semelhança mínima (0-1) para a rua contar como a mesma (padrão 0.6)")
+    ap.add_argument("--navegador", choices=["chrome", "chromium"], default="chrome",
+                    help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
+    ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
+                    help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
     ap.add_argument("--conferir-marcados", action="store_true",
                     help="só leitura: confere no Hub o CEP dos serviços já marcados em 'feito' (log em logs/conferencia.csv)")
     ap.add_argument("--ler-todos-enderecos", action="store_true",

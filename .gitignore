@@ -18,3 +18,4 @@ credenciais*.json
 
 # Gravação do codegen (pode conter o login digitado)
 gravacao.py
+.perfil_chromium/
