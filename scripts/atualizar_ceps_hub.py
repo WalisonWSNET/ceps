@@ -212,9 +212,20 @@ def fechar_observacoes(page, espera_ms=0):
                      .filter(has=page.get_by_text(re.compile(r"^\s*OK\s*$"))))
         caixa = caixa.last
         OBSERVACOES_LIDAS.append(re.sub(r"\s+", " ", caixa.inner_text())[:300])
-        caixa.get_by_text(re.compile(r"^\s*OK\s*$")).filter(visible=True).first.click()
+        ok = caixa.get_by_text(re.compile(r"^\s*OK\s*$")).filter(visible=True).first
+        for tentativa in range(3):
+            try:
+                ok.click(timeout=4000, force=(tentativa == 2))
+                break
+            except PWTimeout:
+                page.wait_for_timeout(400)
+                if titulo.count() == 0:  # a janela fechou sozinha enquanto tentávamos clicar
+                    break
+        else:
+            raise ErroPulavel("observacoes_nao_fechou")
         page.wait_for_timeout(500)
         espera_ms = 0  # as próximas só se já estiverem na tela
+    raise ErroPulavel("observacoes_nao_fechou")  # 5 cliques em OK e a janela continua
 
 
 def abrir_servico(page, linha):
