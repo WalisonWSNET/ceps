@@ -141,6 +141,19 @@ def decidir(linha, cands, mapa, cidade):
     return None, "", melhor["d"], melhor["bairro"], alternativas, "empate_ou_longe"
 
 
+def dist_cep_atual(idx, mapa, cidade, cep, linha):
+    """Distância (km) do cliente ao centro do bairro do CEP atual; None se não der para saber."""
+    c = coordenada(linha.get("coordenadas"))
+    if not (c and cep):
+        return None
+    for es in idx.get(cidade, {}).values():
+        for e in es:
+            if e["cep"] == cep:
+                centro, _ = mapa.centro(cidade, e["bairro_txt"])
+                return km(c, centro) if centro else None
+    return None
+
+
 def main(entrada, ref_path, saida):
     with open(entrada, encoding="utf-8-sig", newline="") as f:
         amostra = f.read(4096)
@@ -168,7 +181,13 @@ def main(entrada, ref_path, saida):
             if sug and sug == atual:
                 acao = "manter"
             elif sug and confiavel:
-                acao = "trocar"
+                # só troca um CEP "confiável" se o bairro dele estiver LONGE do cliente; se já está perto, a diferença entre
+                # os dois candidatos é de faixa/trecho da mesma rua e a geografia sozinha não prova que o atual esteja errado
+                d_atual = dist_cep_atual(idx, mapa, cidade, atual, r)
+                if d_atual is not None and d_atual <= PERTO_KM:
+                    acao, motivo = "manter", f"atual_perto_{d_atual:.1f}km"
+                else:
+                    acao = "trocar"
             elif sug:
                 acao = "resolver"
             else:
