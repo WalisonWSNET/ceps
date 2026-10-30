@@ -138,8 +138,11 @@ def main():
         if onde:
             g.append(dict(r, onde="+".join(onde)))
     print(f"4. ainda com CEP genérico (11700000/11730000/11740000/11750000): {escrever(saida / '4_cep_generico.csv', g, base + ['onde'])}")
+    ainda_novo = [r for r in g if "cep_novo" in r["onde"]]
+    print(f"     só no cep atual (a atualizar, é o trabalho do robô): {sum(1 for r in g if r['onde'] == 'cep')}")
+    print(f"     JÁ no cep_novo (planilha sem CEP de rua; precisam de revisão): {len(ainda_novo)}")
     for cep in sorted(GENERICOS):
-        print(f"     {cep}: {sum(1 for r in g if cep in (so_digitos(r.get('cep')), so_digitos(r.get('cep_novo'))))}")
+        print(f"       cep_novo {cep}: {sum(1 for r in ainda_novo if so_digitos(r.get('cep_novo')) == cep)}")
 
     por_cep = carregar_correios(args.correios)
     s = [dict(r, **avalia_suspeito(r, por_cep)) for r in linhas if suspeito(so_digitos(r.get("cep_novo")))]
