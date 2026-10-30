@@ -1112,6 +1112,33 @@ class MarcadorPlanilha:
             print(f"   AVISO: não consegui escrever na planilha agora ({type(e).__name__}: {str(e)[:120]}); tento no próximo envio")
 
 
+def ids_cep_verde(planilha_id, credenciais, aba=None, coluna_cep="cep_novo"):
+    """Serviços cuja célula de cep_novo tem preenchimento verde na planilha (= já corretos no Hub). Só lê."""
+    import gspread
+    from gspread.utils import rowcol_to_a1
+
+    sh = gspread.service_account(filename=credenciais).open_by_key(planilha_id)
+    for ws in ([sh.worksheet(aba)] if aba else sh.worksheets()):
+        cab = [c.strip().lower() for c in ws.row_values(1)]
+        if "id_cliente_servico" in cab and coluna_cep.lower() in cab:
+            break
+    else:
+        raise ErroFatal(f"não achei a aba com id_cliente_servico e {coluna_cep} para ler as cores")
+    ids = [so_digitos(x) for x in ws.col_values(cab.index("id_cliente_servico") + 1)]
+    col = rowcol_to_a1(1, cab.index(coluna_cep.lower()) + 1).rstrip("1")
+    meta = sh.fetch_sheet_metadata({"includeGridData": "true", "ranges": f"'{ws.title}'!{col}2:{col}",
+                                    "fields": "sheets.data.rowData.values.effectiveFormat.backgroundColor"})
+    linhas = meta["sheets"][0]["data"][0].get("rowData", [])
+    verdes = set()
+    for i, rd in enumerate(linhas, 2):  # linha 2 em diante
+        vals = rd.get("values") or [{}]
+        c = vals[0].get("effectiveFormat", {}).get("backgroundColor", {})
+        r, g, b = c.get("red", 0), c.get("green", 0), c.get("blue", 0)
+        if g > r + 0.05 and g > b + 0.05 and i <= len(ids) and ids[i - 1]:  # verde de verdade (não branco/cinza)
+            verdes.add(ids[i - 1])
+    return verdes
+
+
 LOG_CONFERENCIA = LOGS / "conferencia.csv"
 CONCLUIDOS = FEITOS | {"confere", "cep_diferente"}
 
@@ -1199,7 +1226,15 @@ def executar(args):
                   f"(lista em logs\\multi_servico_para_revisar.csv; tirar --excluir-multi-servico para incluir)")
     feitos = carregar_feitos()
     pulados = set() if (args.refazer_pulados or args.id) else carregar_pulados()
-    fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados]
+    verdes = set()
+    if args.planilha and not args.incluir_verdes and not args.conferir_marcados and not args.id:
+        try:
+            verdes = ids_cep_verde(args.planilha, args.credenciais, args.aba)
+            print(f"{len(verdes)} serviços com cep_novo em verde na planilha (já corretos no Hub) ficam de fora"
+                  + (f"; {len(verdes & {so_digitos(r['id_cliente_servico']) for r in linhas})} deles estavam na fila"))
+        except Exception as e:  # noqa: BLE001 - sem as cores o robô segue (eles viram ja_atualizado no Hub)
+            print(f"AVISO: não consegui ler as cores da planilha ({type(e).__name__}: {str(e)[:120]}); sigo sem ignorar os verdes")
+    fila = [r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados | verdes]
     if args.conferir_marcados:
         fila = linhas  # conferir não exclui o que o robô já fez: a ideia é revisar todos os marcados
     if pulados and not args.conferir_marcados:
@@ -1210,7 +1245,7 @@ def executar(args):
         fila = fila[: args.limite]
     modo = ("conferência dos marcados (só leitura)" if args.conferir_marcados else
             "inspeção" if args.inspecionar else ("GRAVAÇÃO" if args.gravar else "simulação (não grava)"))
-    faltam = len([r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados])
+    faltam = len([r for r in linhas if so_digitos(r["id_cliente_servico"]) not in feitos | pulados | verdes])
     print(f"Faltam {faltam} de {len(linhas)} serviços elegíveis; {len(fila)} nesta rodada. Modo: {modo}")
     if not fila:
         return
@@ -1454,6 +1489,8 @@ def main(argv=None):
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
     ap.add_argument("--travado-min", type=int, default=8, metavar="MIN",
                     help="se um cliente ficar MIN minutos sem avançar (página congelada), salva e encerra com código 3 (0 = desligado; padrão 8)")
+    ap.add_argument("--incluir-verdes", action="store_true",
+                    help="não ignora os serviços com cep_novo em verde na planilha (por padrão ficam de fora)")
     ap.add_argument("--depurar", action="store_true",
                     help="tira foto do painel de endereço e lista os botões antes de fechar (mais lento; para diagnóstico)")
     ap.add_argument("--aceitar-cep-atual", action="store_true",
