@@ -314,8 +314,18 @@ def abrir_servico(page, linha):
     menus.get_by_label("Abrir menu").click()
     page.get_by_role("menuitem", name=re.compile("SERVIÇOS")).click()
 
-    page.get_by_text(re.compile("ID Cliente Serviço")).first.wait_for()
-    fechar_observacoes(page, espera_ms=1200)  # o aviso costuma aparecer logo após a lista carregar
+    # o aviso "Observações Obrigatórias" pode abrir antes de a lista aparecer (e esconde o cartão): fecha e segue esperando
+    cartao_id = page.get_by_text(re.compile("ID Cliente Serviço")).first
+    fim = time.time() + 20
+    while True:
+        fechar_observacoes(page, espera_ms=1200)
+        try:
+            cartao_id.wait_for(state="visible", timeout=1500)
+            break
+        except Exception:  # noqa: BLE001 - ainda carregando ou coberto pelo aviso
+            if time.time() > fim:
+                raise
+    fechar_observacoes(page, espera_ms=600)
     return localizar_cartao(page, idcs)
 
 
