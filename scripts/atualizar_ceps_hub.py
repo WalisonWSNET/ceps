@@ -1195,7 +1195,7 @@ def executar(args):
     funcao = conferir_cartao if args.conferir_marcados else processar
     tela = LOGS / "telas"
 
-    def abrir(p):
+    def abrir(p, pedir_login=True):
         perfil = PERFIL if args.navegador == "chrome" else Path(".perfil_chromium")
         opcoes = dict(headless=False, viewport={"width": 1366, "height": 900},
                       # com a tela bloqueada o Chrome trata a janela como oculta e fica bem mais lento
@@ -1211,7 +1211,7 @@ def executar(args):
         page.on("response", lambda r: (RESPOSTAS.append((time.time(), r.status, r.url[-70:])), RESPOSTAS[:-60] and RESPOSTAS.__delitem__(slice(0, -60))))
         page.on("request", lambda r: (PEDIDOS.append((time.time(), r.method, r.url[-90:])), PEDIDOS[:-40] and PEDIDOS.__delitem__(slice(0, -40))))
         page.goto(HUB)
-        if "/login" in page.url:
+        if pedir_login and "/login" in page.url:
             input("Faça login na janela do navegador (inclusive validações) e tecle ENTER aqui... ")
         return ctx, page
 
@@ -1229,7 +1229,11 @@ def executar(args):
             if n > 1 and args.reiniciar and (n - 1) % args.reiniciar == 0:  # evita o navegador travar em rodadas longas
                 print(f"   reiniciando o navegador (a cada {args.reiniciar} clientes)")
                 ctx.close()
-                ctx, page = abrir(p)
+                ctx, page = abrir(p, pedir_login=False)
+            if "/login" in page.url:
+                print(f"PARANDO: o Hub voltou para a tela de login ({datetime.now():%d/%m %H:%M}); a sessão caiu ou o acesso foi "
+                      "fechado por horário. Tudo salvo; entre no Hub e rode o mesmo comando para continuar.")
+                break
             try:
                 try:
                     status, det = funcao(page, linha, args, tela)
@@ -1255,6 +1259,10 @@ def executar(args):
                     page.screenshot(path=str(tela / f"{idcs}_erro_{datetime.now():%H%M%S}.png"))
                 except Exception as e2:  # noqa: BLE001
                     print(f"   não consegui salvar a captura: {type(e2).__name__}: {str(e2)[:150]}")
+                if "/login" in page.url:
+                    print(f"[{n}/{len(fila)}] {idcs}: o Hub voltou para a tela de login ({datetime.now():%d/%m %H:%M}); "
+                          "parando. Entre no Hub de novo e rode o mesmo comando para continuar.")
+                    break
                 registrar(arquivo_log, linha, "erro", {"erro": f"{type(e).__name__}: {str(e)[:300]}", "url": page.url})
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO inesperado: {type(e).__name__}: {str(e)[:200]}")
                 print(f"   página no momento do erro: {page.url}")
