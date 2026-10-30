@@ -323,8 +323,8 @@ def abrir_servico(page, linha):
             cartao_id.wait_for(state="visible", timeout=1500)
             break
         except Exception:  # noqa: BLE001 - ainda carregando ou coberto pelo aviso
-            if time.time() > fim:
-                raise
+            if time.time() > fim:  # lista sem nenhum cartão visível: cliente cancelado/inativo (ou serviço removido)
+                raise ErroPulavel("servico_nao_encontrado:lista de serviços sem cartão visível (cliente cancelado/inativo?)")
     fechar_observacoes(page, espera_ms=600)
     return localizar_cartao(page, idcs)
 
