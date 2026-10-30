@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import atualizar_ceps as base  # noqa: E402
 
 PERTO_KM = 3.0      # o bairro do CEP precisa ficar a até X km do cliente
+MAX_ALTERAR_KM = 1.5  # só TROCA/RESOLVE sozinho se o bairro do CEP novo ficar a até X km do cliente; acima disso vai p/ revisão
 MARGEM_KM = 0.4     # o melhor candidato precisa ser ao menos X km mais perto que o segundo
 VERDADEIRO = {"TRUE", "VERDADEIRO", "SIM", "1", "X"}
 CONFIAVEIS = {"exato", "exato_por_bairro", "exato_por_numero", "exato_por_faixa", "exato_por_coordenada",
@@ -192,6 +193,8 @@ def main(entrada, ref_path, saida):
                 acao = "resolver"
             else:
                 acao = "revisar"
+            if acao in ("trocar", "resolver") and dist is not None and dist > MAX_ALTERAR_KM:
+                acao, motivo = "revisar", f"sugestao_longe_{dist:.1f}km"
         cont[acao] += 1
         saida_linhas.append(dict(
             id_cliente_servico=r["id_cliente_servico"], codigo_cliente=r["codigo_cliente"], endereco=r["endereco"],
