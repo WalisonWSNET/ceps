@@ -141,7 +141,7 @@ def carregar_feitos():
         return {r["id_cliente_servico"] for r in csv.DictReader(f) if r["status"] in FEITOS}
 
 
-PULADOS = {"servico_nao_encontrado", "numero_divergente", "cep_divergente", "campo_autocompletar_preenchido",
+PULADOS = {"servico_nao_encontrado", "sem_servico_ativo", "numero_divergente", "cep_divergente", "campo_autocompletar_preenchido",
            "enderecos_diferentes", "cep_formulario_divergente", "bairro_longe", "rua_e_bairro_divergem", "cidade_mudou"}  # precisam de tratamento à mão; não repetir a cada rodada
 
 
@@ -316,9 +316,12 @@ def abrir_servico(page, linha):
 
     # o aviso "Observações Obrigatórias" pode abrir antes de a lista aparecer (e esconde o cartão): fecha e segue esperando
     cartao_id = page.get_by_text(re.compile("ID Cliente Serviço")).filter(visible=True).first  # há cópias escondidas na página
+    sem_ativos = page.get_by_text(re.compile(r"Não existem serviços para os filtros selecionados")).filter(visible=True)
     fim = time.time() + 20
     while True:
         fechar_observacoes(page, espera_ms=1200)
+        if sem_ativos.count():  # cliente desativado/cancelado: a lista mostra só serviços Ativos e não há nenhum
+            raise ErroPulavel("sem_servico_ativo:cliente sem serviços ativos (desativado/cancelado)")
         try:
             cartao_id.wait_for(state="visible", timeout=1500)
             break
