@@ -28,7 +28,9 @@ from collections import defaultdict
 import json
 import random
 import re
+import os
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -976,6 +978,26 @@ def processar(page, linha, args, tela):
     return "ok", detalhes
 
 
+SINAL = [time.time()]  # último sinal de vida do laço principal (o vigia abaixo confere)
+
+
+def vigiar_travamento(limite_s, marcador):
+    """Se o laço principal ficar parado (página congelada: o Playwright não tem tempo limite em evaluate/click presos),
+    envia as marcações pendentes e encerra o processo com código 3, para um laço externo religar o robô."""
+    def vigia():
+        while True:
+            time.sleep(20)
+            if time.time() - SINAL[0] > limite_s:
+                print(f"\nTRAVADO: {limite_s // 60} min sem avançar ({datetime.now():%d/%m %H:%M}); salvando e encerrando "
+                      "(código 3). Rode o mesmo comando para continuar.", flush=True)
+                try:
+                    if marcador:
+                        marcador.enviar()
+                finally:
+                    os._exit(3)
+    threading.Thread(target=vigia, daemon=True).start()
+
+
 def diagnostico(page):
     """Lista os campos visíveis da página, para entender onde o robô parou."""
     try:
@@ -1217,6 +1239,9 @@ def executar(args):
 
     with sync_playwright() as p:
         ctx, page = abrir(p)
+        SINAL[0] = time.time()
+        if args.travado_min:
+            vigiar_travamento(args.travado_min * 60, marcador)
         erros_seguidos = alarmes = sem_feito = 0
         limite_t = proximo_horario(args.ate) if args.ate else None
         if limite_t:
@@ -1225,6 +1250,7 @@ def executar(args):
             if limite_t and datetime.now() >= limite_t:
                 print(f"Horário limite ({limite_t:%H:%M}) atingido. Parando com tudo salvo; rode o mesmo comando para continuar.")
                 break
+            SINAL[0] = time.time()
             idcs = so_digitos(linha["id_cliente_servico"])
             if n > 1 and args.reiniciar and (n - 1) % args.reiniciar == 0:  # evita o navegador travar em rodadas longas
                 print(f"   reiniciando o navegador (a cada {args.reiniciar} clientes)")
@@ -1416,6 +1442,8 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--travado-min", type=int, default=8, metavar="MIN",
+                    help="se um cliente ficar MIN minutos sem avançar (página congelada), salva e encerra com código 3 (0 = desligado; padrão 8)")
     ap.add_argument("--depurar", action="store_true",
                     help="tira foto do painel de endereço e lista os botões antes de fechar (mais lento; para diagnóstico)")
     ap.add_argument("--aceitar-cep-atual", action="store_true",
