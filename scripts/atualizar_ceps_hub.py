@@ -315,7 +315,7 @@ def abrir_servico(page, linha):
     page.get_by_role("menuitem", name=re.compile("SERVIÇOS")).click()
 
     # o aviso "Observações Obrigatórias" pode abrir antes de a lista aparecer (e esconde o cartão): fecha e segue esperando
-    cartao_id = page.get_by_text(re.compile("ID Cliente Serviço")).first
+    cartao_id = page.get_by_text(re.compile("ID Cliente Serviço")).filter(visible=True).first  # há cópias escondidas na página
     fim = time.time() + 20
     while True:
         fechar_observacoes(page, espera_ms=1200)
