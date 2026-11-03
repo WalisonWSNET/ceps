@@ -36,6 +36,9 @@ def main():
     ap.add_argument("--credenciais", default="credenciais_google.json")
     ap.add_argument("--aba")
     ap.add_argument("--gravar", action="store_true")
+    ap.add_argument("--nao-rebaixar", action="store_true",
+                    help="não troca o status de linhas 'confiáveis' para revisar_geografia (elas continuam na fila do robô); "
+                         "só aplica trocar/resolver e preenche ceps_candidatos")
     args = ap.parse_args()
 
     import gspread
@@ -83,7 +86,7 @@ def main():
         celulas = {}
         if acao in ("trocar", "resolver"):
             celulas = {"cep_novo": r["cep_novo_sugerido"], "status_cep": "exato_por_geografia", "cep_novo_anterior": atual}
-        elif status_atual in CONFIAVEIS:
+        elif status_atual in CONFIAVEIS and not args.nao_rebaixar:
             celulas = {"status_cep": "revisar_geografia"}
             if alt:  # sem alternativas novas, mantém o texto antigo da coluna
                 celulas["ceps_candidatos"] = alt
@@ -91,8 +94,8 @@ def main():
             celulas = {"ceps_candidatos": alt}
         if not celulas:
             continue
-        resumo[acao + ("*" if acao == "revisar" and status_atual in CONFIAVEIS else "")] = \
-            resumo.get(acao + ("*" if acao == "revisar" and status_atual in CONFIAVEIS else ""), 0) + 1
+        chave = acao + ("*" if acao == "revisar" and status_atual in CONFIAVEIS and not args.nao_rebaixar else "")
+        resumo[chave] = resumo.get(chave, 0) + 1
         for nome, novo in celulas.items():
             backup.append((idcs, nome, valor(n, nome), novo))
             mudancas.append({"range": rowcol_to_a1(n, col[nome]), "values": [[novo]]})
