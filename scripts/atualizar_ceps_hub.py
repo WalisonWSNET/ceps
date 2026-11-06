@@ -1328,6 +1328,15 @@ def executar(args):
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO FATAL: {e}")
                 break
             except Exception as e:  # noqa: BLE001 - qualquer erro inesperado
+                if re.search(r"Connection closed|Playwright connection closed", str(e)):
+                    # o processo do Playwright morreu (não é culpa deste cliente): salva e sai com código 3 para o laço religar
+                    print(f"[{n}/{len(fila)}] o driver do Playwright caiu ({datetime.now():%d/%m %H:%M}); salvando e reiniciando "
+                          "(código 3).", flush=True)
+                    try:
+                        if marcador:
+                            marcador.enviar()
+                    finally:
+                        os._exit(3)
                 tela.mkdir(parents=True, exist_ok=True)
                 try:
                     page.screenshot(path=str(tela / f"{idcs}_erro_{datetime.now():%H%M%S}.png"))
