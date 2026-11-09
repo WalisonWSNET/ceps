@@ -1229,6 +1229,7 @@ def processar(page, linha, args, tela):
 
 
 SINAL = [time.time()]  # último sinal de vida do laço principal (o vigia abaixo confere)
+FIM = [False]  # o laço terminou: o vigia não deve mais reiniciar o robô
 
 
 def vigiar_travamento(limite_s, marcador):
@@ -1237,6 +1238,8 @@ def vigiar_travamento(limite_s, marcador):
     def vigia():
         while True:
             time.sleep(20)
+            if FIM[0]:
+                return
             if time.time() - SINAL[0] > limite_s:
                 print(f"\nTRAVADO: {limite_s // 60} min sem avançar ({datetime.now():%d/%m %H:%M}); salvando e encerrando "
                       "(código 3). Rode o mesmo comando para continuar.", flush=True)
@@ -1645,8 +1648,12 @@ def executar(args):
                 print("   tempos:", ", ".join(f"{b[0]} {b[1] - a[1]:.1f}s" for a, b in zip(FASES, FASES[1:])),
                       f"| total {FASES[-1][1] - FASES[0][1]:.1f}s")
             time.sleep(random.uniform(*args.pausa))
+        FIM[0] = True  # terminou (horário limite, PARANDO, fila acabou): o vigia não pode reiniciar o robô agora
         if marcador:
             marcador.enviar()
+        t = threading.Timer(60, lambda: os._exit(0))  # se o Chromium não fechar em 1 min, sai assim mesmo (trabalho já salvo)
+        t.daemon = True
+        t.start()
         ctx.close()
 
 
