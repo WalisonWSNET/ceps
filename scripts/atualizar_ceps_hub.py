@@ -572,7 +572,12 @@ def bairro_combina(a, b, minimo=0.6):
     return bool(ta | tb) and len(ta & tb) / len(ta | tb) >= minimo
 
 
-def mesclar_enderecos(todos, bairros_novo_cep=None):
+def em_regiao(cep):
+    cep = so_digitos(cep)
+    return len(cep) == 8 and 11730000 <= int(cep) <= 11799999  # Mongaguá, Itanhaém, Peruíbe
+
+
+def mesclar_enderecos(todos, bairros_novo_cep=None, cep_novo=None):
     """Se os endereços só diferem em complemento/referência, devolve o valor a usar em todos (o preenchido).
     Qualquer outra diferença, ou dois valores preenchidos diferentes, vira ErroPulavel."""
     mapas = {t: {k: c["valor"].strip() for k, c in mapear(cs).items()} for t, cs in todos.items()}
@@ -580,6 +585,8 @@ def mesclar_enderecos(todos, bairros_novo_cep=None):
         valores_ = {so_digitos(m.get(chave, "")) if chave == "cep" else re.sub(r"\s+", " ", m.get(chave, "")).casefold()
                     for m in mapas.values()}
         if len(valores_) > 1:
+            if chave == "cep" and cep_novo and cep_novo in valores_ and all(em_regiao(v) for v in valores_):
+                continue  # um dos endereços já tem o CEP novo e os outros são CEPs das 3 cidades: o "Atualizar Todos" unifica
             if chave == "bairro" and bairros_novo_cep:
                 # vale o Cadastral e a Instalação: se o bairro do CEP novo (lista dos Correios) combina com o de algum deles,
                 # mantém o CEP novo (o "Atualizar Todos" unifica os 4 endereços)
@@ -1054,7 +1061,7 @@ def processar(page, linha, args, tela):
     if faltando:
         raise ErroFatal(f"campos não encontrados na tela: {faltando}. Rode --inspecionar e ajuste PADROES.")
 
-    if so_digitos(mapa["cep"]["valor"]) != antigo:  # formulário lido pela metade ou endereço diferente do esperado
+    if so_digitos(mapa["cep"]["valor"]) not in (antigo, novo):  # formulário lido pela metade ou endereço diferente do esperado
         return "cep_formulario_divergente", {"cep_formulario": mapa["cep"]["valor"], "cep_planilha": antigo}
     n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
     if n_hub != n_plan:  # inclui Hub vazio e planilha com número: o endereço Cadastral não é o da instalação
@@ -1068,7 +1075,7 @@ def processar(page, linha, args, tela):
 
     if todos_lidos is not None:  # junta o Cadastral (lido agora) aos outros 3 e decide o que mesclar
         todos_lidos["cadastral"] = campos
-        mesclado = mesclar_enderecos(todos_lidos, {e["bairro_txt"] for e in args.por_cep.get(novo, [])})
+        mesclado = mesclar_enderecos(todos_lidos, {e["bairro_txt"] for e in args.por_cep.get(novo, [])}, novo)
 
     # campos de autocompletar (ex.: Condomínio) só guardam o valor ao escolher uma opção da lista:
     # se estiverem preenchidos, o robô não consegue recolocá-los com segurança -> deixa para ver à mão
