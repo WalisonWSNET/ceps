@@ -943,6 +943,7 @@ def escolher_endereco_alvo(linhas):
 
 def abrir_linha_do_tipo(page, tipo):
     """Clica no lápis (Editar) da linha do endereço deste tipo."""
+    page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).first.wait_for(timeout=15000)  # a lista pode ainda estar carregando
     for i in range(page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).count()):
         linha = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).nth(i)
         m = TIPOS_ENDERECO.search(linha.inner_text())
@@ -1048,7 +1049,10 @@ def processar_um_endereco(page, linha, args, tela, cartao):
         if lista2.get(t, ("",))[0] != esperado:
             raise ErroPulavel("verificacao_cep_nao_confere:" + json.dumps(
                 {"endereco": t, "esperado": esperado, "achado": lista2.get(t, ("",))[0], "detalhes": detalhes}, ensure_ascii=False)[:1500])
-    for tipo, info in detalhes["alterados"].items():
+    for k, (tipo, info) in enumerate(detalhes["alterados"].items()):
+        if k:  # fechar um painel derruba a janela do serviço: volta ao serviço pelo caminho completo
+            cartao = abrir_servico(page, linha)
+            abrir_aba_enderecos(page, cartao)
         dialogo2 = abrir_linha_do_tipo(page, tipo)
         esperar_estabilizar(page, dialogo2, minimo_ms=800)
         m2 = mapear(ler_campos(dialogo2))
@@ -1057,8 +1061,6 @@ def processar_um_endereco(page, linha, args, tela, cartao):
             if e != a:
                 raise ErroPulavel(f"verificacao_{chave}_nao_confere:" + json.dumps(
                     {"endereco": tipo, "esperado": e, "achado": a, "antes": info["antes"]}, ensure_ascii=False)[:1500])
-        if len(detalhes["alterados"]) > 1:  # sai do painel sem gravar para abrir o próximo
-            fechar_formulario(page, dialogo2)
     marca("verificacao")
     return "ok", detalhes
 
