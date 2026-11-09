@@ -800,7 +800,11 @@ def clicar_texto(page, padrao, nome):
     alvo.first.wait_for()
     for _ in range(20):
         if alvo.count() == 1:
-            alvo.click()
+            try:
+                alvo.click(timeout=8000)
+            except Exception:  # noqa: BLE001 - PC/Hub lento: o botão "não estabiliza"; tenta de novo forçando o clique
+                page.wait_for_timeout(1000)
+                alvo.click(force=True, timeout=8000)
             return
         page.wait_for_timeout(300)
     raise ErroPulavel(f"botao_{nome}_ambiguo_{alvo.count()}")
