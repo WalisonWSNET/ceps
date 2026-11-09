@@ -912,12 +912,12 @@ def linhas_de_endereco(page):
 
 
 def escolher_endereco_alvo(linhas):
-    """O endereço que deve mudar: o de uma das 3 cidades (CEP começa com 117), na ordem Instalação > Cadastral > Cobrança >
+    """O endereço que deve mudar: o de uma das 3 cidades (CEP entre 11730000 e 11799999), na ordem Instalação > Cadastral > Cobrança >
     Fiscal. `linhas` = {tipo: (cep, texto)}. Devolve o tipo ou None."""
     candidatos = []
     for tipo, (cep, _) in linhas.items():
         ordem = next((i for i, p in enumerate(PRIORIDADE_ENDERECO) if norm_txt(tipo).startswith(p)), 9)
-        if cep.startswith("117"):
+        if len(cep) == 8 and 11730000 <= int(cep) <= 11799999:  # Mongaguá (1173x), Itanhaém (1174x), Peruíbe (1175x-1179x)
             candidatos.append((ordem, tipo))
     return min(candidatos)[1] if candidatos else None
 
