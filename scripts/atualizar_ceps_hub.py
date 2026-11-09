@@ -567,8 +567,12 @@ def cep_valido_para_endereco(por_cep, cep, endereco, numero):
     return None
 
 
+ENFEITES_BAIRRO = {"balneario", "praia", "interior"}  # "Balneário Gaivota" = "Gaivota (Praia)"; "Suarão (Interior)" = "Suarão"
+
+
 def bairro_combina(a, b, minimo=0.6):
-    ta, tb = ref_ceps.tokens_bairro(a or ""), ref_ceps.tokens_bairro(b or "")
+    ta = ref_ceps.tokens_bairro(a or "") - ENFEITES_BAIRRO
+    tb = ref_ceps.tokens_bairro(b or "") - ENFEITES_BAIRRO
     if not (ta | tb):
         return False
     if ta and tb and (ta <= tb or tb <= ta):  # "Oásis" x "Jardim Oásis": um nome contém o outro
@@ -594,6 +598,11 @@ def mesclar_enderecos(todos, bairros_novo_cep=None, cep_novo=None):
     Qualquer outra diferença, ou dois valores preenchidos diferentes, vira ErroPulavel."""
     mapas = {t: {k: c["valor"].strip() for k, c in mapear(cs).items()} for t, cs in todos.items()}
     for chave in NUCLEO:
+        if chave == "logradouro":
+            ruas = [chave_logradouro(m.get("logradouro", "")) for m in mapas.values()]
+            if all(difflib.SequenceMatcher(None, a, b).ratio() >= 0.92 and a.split("|")[0] == b.split("|")[0]
+                   and min(len(a), len(b)) >= 18 for a in ruas for b in ruas):
+                continue  # a mesma rua com pequena diferença de grafia (ex.: "vianna" e "viana"), mesmo tipo de via
         valores_ = {so_digitos(m.get(chave, "")) if chave == "cep"
                     else chave_logradouro(m.get(chave, "")) if chave == "logradouro"
                     else re.sub(r"\s+", " ", m.get(chave, "")).casefold()
