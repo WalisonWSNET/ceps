@@ -593,11 +593,13 @@ def em_regiao(cep):
     return len(cep) == 8 and 11730000 <= int(cep) <= 11799999  # Mongaguá, Itanhaém, Peruíbe
 
 
-def mesclar_enderecos(todos, bairros_novo_cep=None, cep_novo=None):
+def mesclar_enderecos(todos, bairros_novo_cep=None, cep_novo=None, ignorar_bairro=False):
     """Se os endereços só diferem em complemento/referência, devolve o valor a usar em todos (o preenchido).
     Qualquer outra diferença, ou dois valores preenchidos diferentes, vira ErroPulavel."""
     mapas = {t: {k: c["valor"].strip() for k, c in mapear(cs).items()} for t, cs in todos.items()}
     for chave in NUCLEO:
+        if chave == "bairro" and ignorar_bairro:
+            continue  # --aceitar-bairro: você já decidiu que o CEP da planilha vale, qualquer que seja o bairro cadastrado
         if chave == "logradouro":
             ruas = [chave_logradouro(m.get("logradouro", "")) for m in mapas.values()]
             if all(difflib.SequenceMatcher(None, a, b).ratio() >= 0.92 and a.split("|")[0] == b.split("|")[0]
@@ -1010,7 +1012,7 @@ def editar_um_endereco(page, linha, args, tipo, cep_lista, novo, detalhes):
         {k: mapa[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in mapa},
         {k: atual[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in atual},
         linha.get("cidade"), args.bairros, args.bairro_perto_km, args.rua_parecida)
-    if motivo:
+    if motivo and not (args.aceitar_bairro and motivo == "bairro_longe"):
         return motivo, dict(info_div, endereco=tipo)
     esp = esperados_do_formulario(guardar, None)
     recolocados = garantir_formulario(page, dialogo, esp)
@@ -1149,7 +1151,8 @@ def processar(page, linha, args, tela):
 
     if todos_lidos is not None:  # junta o Cadastral (lido agora) aos outros 3 e decide o que mesclar
         todos_lidos["cadastral"] = campos
-        mesclado = mesclar_enderecos(todos_lidos, {e["bairro_txt"] for e in args.por_cep.get(novo, [])}, novo)
+        mesclado = mesclar_enderecos(todos_lidos, {e["bairro_txt"] for e in args.por_cep.get(novo, [])}, novo,
+                                      ignorar_bairro=args.aceitar_bairro)
 
     # campos de autocompletar (ex.: Condomínio) só guardam o valor ao escolher uma opção da lista:
     # se estiverem preenchidos, o robô não consegue recolocá-los com segurança -> deixa para ver à mão
@@ -1174,7 +1177,7 @@ def processar(page, linha, args, tela):
         {k: mapa[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in mapa},
         {k: atual[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in atual},
         linha.get("cidade"), args.bairros, args.bairro_perto_km, args.rua_parecida)
-    if motivo:
+    if motivo and not (args.aceitar_bairro and motivo == "bairro_longe"):
         return motivo, info_div  # nada foi gravado
     marca("trocar_cep")
 
@@ -1429,6 +1432,8 @@ def executar(args):
     DEPURAR = args.depurar
     todas = ler_linhas(args.csv)
     args.bairros = construir_bairros(todas)
+    if args.aceitar_bairro and not args.id:
+        raise SystemExit("--aceitar-bairro exige --id (use só para os clientes que você já revisou)")
     if args.so_um_endereco and not args.id:
         raise SystemExit("--so-um-endereco exige --id (use um serviço de cada vez e confira o resultado no Hub)")
     args.por_cep = carregar_por_cep(args.ceps_ref)
@@ -1739,6 +1744,9 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--aceitar-bairro", action="store_true",
+                    help="grava o CEP da planilha mesmo com bairro longe / bairros diferentes entre os endereços (rua e cidade "
+                         "continuam conferidas). Exige --id: use só para clientes que você já revisou")
     ap.add_argument("--so-um-endereco", action="store_true",
                     help="muda só o endereço de uma das 3 cidades (Instalação > Cadastral > Cobrança > Fiscal) e salva com 'Salvar', "
                          "sem 'Atualizar Todos'. Exige --id (para clientes com endereços de outra cidade, ex.: Barueri)")
