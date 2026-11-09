@@ -601,7 +601,7 @@ def mesclar_enderecos(todos, bairros_novo_cep=None, cep_novo=None):
         if chave == "logradouro":
             ruas = [chave_logradouro(m.get("logradouro", "")) for m in mapas.values()]
             if all(difflib.SequenceMatcher(None, a, b).ratio() >= 0.92 and a.split("|")[0] == b.split("|")[0]
-                   and min(len(a), len(b)) >= 18 for a in ruas for b in ruas):
+                   and min(len(a.split("|", 1)[1]), len(b.split("|", 1)[1])) >= 14 for a in ruas for b in ruas):
                 continue  # a mesma rua com pequena diferença de grafia (ex.: "vianna" e "viana"), mesmo tipo de via
         valores_ = {so_digitos(m.get(chave, "")) if chave == "cep"
                     else chave_logradouro(m.get(chave, "")) if chave == "logradouro"
