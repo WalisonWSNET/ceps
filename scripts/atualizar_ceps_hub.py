@@ -569,15 +569,19 @@ def cep_valido_para_endereco(por_cep, cep, endereco, numero):
 
 def bairro_combina(a, b, minimo=0.6):
     ta, tb = ref_ceps.tokens_bairro(a or ""), ref_ceps.tokens_bairro(b or "")
-    return bool(ta | tb) and len(ta & tb) / len(ta | tb) >= minimo
+    if not (ta | tb):
+        return False
+    if ta and tb and (ta <= tb or tb <= ta):  # "Oásis" x "Jardim Oásis": um nome contém o outro
+        return True
+    return len(ta & tb) / len(ta | tb) >= minimo
 
 
 def chave_logradouro(v):
     """Nome da rua sem o tipo ("r." = "rua") e sem número colado no fim ("garcia 465"): é a mesma rua escrita de outro jeito."""
-    toks = [t for t in norm_txt(v).split() if t not in TIPOS_VIA and t not in PARTICULAS]
-    while len(toks) > 2 and toks[-1].isdigit():
-        toks.pop()
-    return " ".join(toks)
+    tipo, nome = ref_ceps.separa_tipo(v or "")  # "r." = "rua"; Avenida e Rua continuam diferentes (Av. Sorocabana x Rua Sorocabana)
+    toks = ref_ceps.chave(nome).split()  # sem partículas e títulos (doutor = dr, professor = prof...), ordenado
+    base = [t for t in toks if not t.isdigit()]
+    return f"{tipo or ''}|" + (" ".join(base) if len(base) >= 2 else " ".join(toks))  # número colado no fim não conta
 
 
 def em_regiao(cep):
@@ -597,6 +601,10 @@ def mesclar_enderecos(todos, bairros_novo_cep=None, cep_novo=None):
         if len(valores_) > 1:
             if chave == "cep" and cep_novo and cep_novo in valores_ and all(em_regiao(v) for v in valores_):
                 continue  # um dos endereços já tem o CEP novo e os outros são CEPs das 3 cidades: o "Atualizar Todos" unifica
+            if chave == "bairro":
+                nomes = [m.get("bairro", "") for m in mapas.values()]
+                if all(bairro_combina(a, b) for a in nomes for b in nomes):
+                    continue  # só muda a escrita do mesmo bairro entre os endereços (ex.: "Oásis" e "Jardim Oásis")
             if chave == "bairro" and bairros_novo_cep:
                 # vale o Cadastral e a Instalação: se o bairro do CEP novo (lista dos Correios) combina com o de algum deles,
                 # mantém o CEP novo (o "Atualizar Todos" unifica os 4 endereços)
