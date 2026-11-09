@@ -895,6 +895,95 @@ def trocar_cep(page, dialogo, campos, mapa, novo):
 
 
 
+PRIORIDADE_ENDERECO = ("instalacao", "cadastral", "cobranca", "fiscal")
+CIDADES_NORM = {"itanhaem", "mongagua", "peruibe"}
+
+
+def escolher_endereco_alvo(todos):
+    """Entre os 4 endereços, o que deve mudar: o de uma das 3 cidades, na ordem Instalação > Cadastral > Cobrança > Fiscal.
+    Devolve o tipo (chave de `todos`) ou None."""
+    candidatos = []
+    for tipo, campos in todos.items():
+        cidade = norm_txt(mapear(campos).get("cidade", {}).get("valor", "")).split(" ")[0]
+        ordem = next((i for i, p in enumerate(PRIORIDADE_ENDERECO) if norm_txt(tipo).startswith(p)), 9)
+        if cidade in CIDADES_NORM:
+            candidatos.append((ordem, tipo))
+    return min(candidatos)[1] if candidatos else None
+
+
+def abrir_linha_do_tipo(page, tipo):
+    """Clica no lápis (Editar) da linha do endereço deste tipo."""
+    for i in range(page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).count()):
+        linha = page.get_by_role("row").filter(has_text=LINHAS_ENDERECO).nth(i)
+        m = TIPOS_ENDERECO.search(linha.inner_text())
+        if m and m.group(0).lower() == tipo:
+            linha.get_by_label("Editar").click()
+            return achar_formulario(page)
+    raise ErroPulavel(f"linha_{tipo}_nao_encontrada")
+
+
+def processar_um_endereco(page, linha, args, tela, cartao):
+    """Muda SÓ UM endereço (o de uma das 3 cidades; Instalação tem prioridade) e salva com 'Salvar', sem 'Atualizar Todos'.
+    Para clientes que têm Cadastral/Fiscal/Cobrança em outra cidade (ex.: Barueri). Use com --id e confira o resultado."""
+    idcs = so_digitos(linha["id_cliente_servico"])
+    novo = so_digitos(linha["cep_novo"])
+    todos = ler_todos_enderecos(page, lambda: reabrir_rapido(page, linha))
+    alvo = escolher_endereco_alvo(todos)
+    if not alvo:
+        raise ErroPulavel("nenhum_endereco_da_regiao")
+    mapa_alvo = mapear(todos[alvo])
+    if so_digitos(mapa_alvo["cep"]["valor"]) == novo:
+        return "ja_atualizado", {"endereco_alterado": alvo}
+    n_hub, n_plan = so_digitos(mapa_alvo["numero"]["valor"]), so_digitos(linha.get("numero"))
+    if n_hub != n_plan:
+        return "numero_divergente", {"numero_hub": mapa_alvo["numero"]["valor"], "numero_planilha": linha.get("numero"),
+                                     "endereco": alvo}
+    dialogo = abrir_linha_do_tipo(page, alvo)
+    esperar_estabilizar(page, dialogo, minimo_ms=600)
+    campos = ler_campos(dialogo)
+    mapa = mapear(campos)
+    auto = {c["rotulo"]: c["valor"].strip() for c in campos if c["tipo"] == "search" and not derivado(c) and c["valor"].strip()}
+    if auto:
+        return "campo_autocompletar_preenchido", dict(auto, endereco=alvo)
+    guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
+    atual = mapear(ler_campos(dialogo))
+    motivo, info_div = avaliar_divergencia(
+        {k: mapa[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in mapa},
+        {k: atual[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in atual},
+        linha.get("cidade"), args.bairros, args.bairro_perto_km, args.rua_parecida)
+    if motivo:
+        return motivo, info_div
+    esp = esperados_do_formulario(guardar, None)
+    recolocados = garantir_formulario(page, dialogo, esp)
+    detalhes = {"endereco_alterado": alvo, "antes": antes, "final": final, "rua_bairro": info_div,
+                "enderecos_antes": {t: valores(cs) for t, cs in todos.items()}}
+    if recolocados:
+        detalhes["recolocados_antes_de_gravar"] = recolocados
+    if not args.gravar:
+        return "simulado_ok", detalhes
+    clicar_texto(page, r"^\s*Salvar\s*$", "salvar")  # só este endereço (sem "Atualizar Todos")
+    try:
+        dialogo.wait_for(state="hidden", timeout=10000)
+    except Exception:  # noqa: BLE001 - a conferência abaixo decide
+        pass
+    page.wait_for_timeout(1500)
+    marca("gravar")
+    # conferência: reabre o serviço e relê os 4 endereços
+    cartao = abrir_servico(page, linha)
+    abrir_aba_enderecos(page, cartao)
+    depois_todos = ler_todos_enderecos(page, lambda: reabrir_rapido(page, linha))
+    m2 = mapear(depois_todos.get(alvo, []))
+    if so_digitos(m2.get("cep", {}).get("valor", "")) != novo:
+        raise ErroPulavel("verificacao_cep_nao_confere:" + json.dumps({"endereco": alvo, "antes": antes}, ensure_ascii=False)[:800])
+    for chave in ("numero", "complemento", "referencia"):
+        e, a = norm_campo(mapa[chave]["valor"]), norm_campo(m2.get(chave, {}).get("valor", ""))
+        if e != a:
+            raise ErroPulavel(f"verificacao_{chave}_nao_confere:" + json.dumps(
+                {"endereco": alvo, "esperado": e, "achado": a, "antes": antes}, ensure_ascii=False)[:800])
+    marca("verificacao")
+    return "ok", detalhes
+
+
 def processar(page, linha, args, tela):
     idcs = so_digitos(linha["id_cliente_servico"])
     antigo, novo = so_digitos(linha["cep"]), so_digitos(linha["cep_novo"])
@@ -920,6 +1009,8 @@ def processar(page, linha, args, tela):
             return "cep_divergente", {"cep_cartao": atual, "cep_planilha": antigo}
 
     abrir_aba_enderecos(page, cartao)
+    if args.so_um_endereco:
+        return processar_um_endereco(page, linha, args, tela, cartao)
     mesclado = None
     todos_lidos = None
     lista_igual = enderecos_iguais(page)
@@ -1240,6 +1331,8 @@ def executar(args):
     DEPURAR = args.depurar
     todas = ler_linhas(args.csv)
     args.bairros = construir_bairros(todas)
+    if args.so_um_endereco and not args.id:
+        raise SystemExit("--so-um-endereco exige --id (use um serviço de cada vez e confira o resultado no Hub)")
     args.por_cep = carregar_por_cep(args.ceps_ref)
     if not args.por_cep:
         print(f"AVISO: lista dos Correios não encontrada em {args.ceps_ref}; as regras que dependem dela ficam desligadas")
@@ -1545,6 +1638,9 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--so-um-endereco", action="store_true",
+                    help="muda só o endereço de uma das 3 cidades (Instalação > Cadastral > Cobrança > Fiscal) e salva com 'Salvar', "
+                         "sem 'Atualizar Todos'. Exige --id (para clientes com endereços de outra cidade, ex.: Barueri)")
     ap.add_argument("--ceps-ref", default="data/ceps_logradouros.csv",
                     help="lista dos Correios (para a faixa de numeração e o bairro de cada CEP)")
     ap.add_argument("--travado-min", type=int, default=8, metavar="MIN",
