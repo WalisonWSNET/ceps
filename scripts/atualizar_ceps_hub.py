@@ -1434,6 +1434,18 @@ def executar(args):
 
     global DEPURAR
     DEPURAR = args.depurar
+    if sys.platform == "win32" and not args.prioridade_normal:
+        # prioridade baixa: o Chromium (filho deste processo) herda, e o PC continua usável enquanto o robô roda
+        try:
+            import ctypes
+
+            k = ctypes.windll.kernel32
+            k.GetCurrentProcess.restype = ctypes.c_void_p
+            k.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            if k.SetPriorityClass(k.GetCurrentProcess(), 0x00004000):  # BELOW_NORMAL_PRIORITY_CLASS
+                print("Prioridade baixa ativada (o PC fica mais livre; use --prioridade-normal para desligar).")
+        except Exception:  # noqa: BLE001 - só conforto, nunca deve impedir o robô
+            pass
     todas = ler_linhas(args.csv)
     args.bairros = construir_bairros(todas)
     if args.aceitar_bairro and not args.id:
@@ -1513,7 +1525,7 @@ def executar(args):
 
     def abrir(p, pedir_login=True):
         perfil = PERFIL if args.navegador == "chrome" else Path(".perfil_chromium")
-        opcoes = dict(headless=False, viewport={"width": 1366, "height": 900},
+        opcoes = dict(headless=args.sem_janela, viewport={"width": 1366, "height": 900},
                       # com a tela bloqueada o Chrome trata a janela como oculta e fica bem mais lento
                       args=["--disable-features=CalculateNativeWinOcclusion", "--disable-backgrounding-occluded-windows",
                             "--disable-renderer-backgrounding", "--disable-background-timer-throttling"])
@@ -1527,6 +1539,8 @@ def executar(args):
         page.on("response", lambda r: (RESPOSTAS.append((time.time(), r.status, r.url[-70:])), RESPOSTAS[:-60] and RESPOSTAS.__delitem__(slice(0, -60))))
         page.on("request", lambda r: (PEDIDOS.append((time.time(), r.method, r.url[-90:])), PEDIDOS[:-40] and PEDIDOS.__delitem__(slice(0, -40))))
         page.goto(HUB)
+        if args.sem_janela and "/login" in page.url:
+            raise ErroFatal("a sessão do Hub caiu e --sem-janela não consegue logar: rode uma vez sem --sem-janela, faça o login e depois volte")
         if pedir_login and "/login" in page.url:
             input("Faça login na janela do navegador (inclusive validações) e tecle ENTER aqui... ")
         return ctx, page
@@ -1748,6 +1762,11 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--sem-janela", action="store_true",
+                    help="roda o Chromium sem janela (usa menos do PC). O login do Hub precisa já estar feito no perfil; "
+                         "se a sessão cair, o robô avisa em vez de pedir login")
+    ap.add_argument("--prioridade-normal", action="store_true",
+                    help="desliga a prioridade baixa do robô (no Windows ela vem ligada para o PC não travar)")
     ap.add_argument("--aceitar-bairro", action="store_true",
                     help="grava o CEP da planilha mesmo com bairro longe / bairros diferentes entre os endereços (rua e cidade "
                          "continuam conferidas). Exige --id: use só para clientes que você já revisou")
