@@ -1567,7 +1567,10 @@ def executar(args):
             print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else "")
                   + (f"  | faltam {faltam}" if args.gravar else ""))
             if status == "simulado_ok":
-                print("   antes:", det["antes"], "\n   após trocar o CEP:", det.get("apos_trocar_cep", det.get("final")))
+                if "antes" in det:
+                    print("   antes:", det["antes"], "\n   após trocar o CEP:", det.get("apos_trocar_cep", det.get("final")))
+                else:  # --so-um-endereco: vários endereços
+                    print("   endereços a alterar:", det.get("enderecos_a_alterar"), "| CEPs antes:", det.get("lista_antes"))
             if status in CONCLUIDOS:
                 alarmes = sem_feito = 0
             else:
