@@ -1524,7 +1524,7 @@ def executar(args):
             print(f"[{n}/{len(fila)}] {idcs}: {status}" + (f" ({det['info']})" if det.get("info") else "")
                   + (f"  | faltam {faltam}" if args.gravar else ""))
             if status == "simulado_ok":
-                print("   antes:", det["antes"], "\n   após trocar o CEP:", det["apos_trocar_cep"])
+                print("   antes:", det["antes"], "\n   após trocar o CEP:", det.get("apos_trocar_cep", det.get("final")))
             if status in CONCLUIDOS:
                 alarmes = sem_feito = 0
             else:
