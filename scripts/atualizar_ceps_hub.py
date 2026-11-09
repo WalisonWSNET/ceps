@@ -952,6 +952,25 @@ def abrir_linha_do_tipo(page, tipo):
     raise ErroPulavel(f"linha_{tipo}_nao_encontrada")
 
 
+def clicar_salvar_do_painel(page, dialogo):
+    """Clica no 'Salvar' do painel do endereço. A janela do serviço, atrás, também tem um 'Salvar': por isso procura primeiro
+    dentro do painel; se ainda sobrar mais de um, usa o último da página (o do painel que está por cima)."""
+    padrao = re.compile(r"^\s*Salvar\s*$", re.I)
+    for escopo in (dialogo, page):
+        alvo = escopo.get_by_text(padrao).filter(visible=True)
+        try:
+            alvo.first.wait_for(timeout=6000)
+        except Exception:  # noqa: BLE001
+            continue
+        if alvo.count() == 1:
+            alvo.click()
+            return
+        if escopo is page and alvo.count() > 1:
+            alvo.last.click()
+            return
+    raise ErroPulavel("botao_salvar_do_painel_nao_achado")
+
+
 def editar_um_endereco(page, linha, args, tipo, cep_lista, novo, detalhes):
     """Edita e salva (só com 'Salvar') o endereço deste tipo. Devolve None se deu certo (ou se simulou) ou
     (status, detalhes) se este endereço deve ficar como está."""
@@ -981,7 +1000,7 @@ def editar_um_endereco(page, linha, args, tipo, cep_lista, novo, detalhes):
                                                    "recolocados": recolocados, "esperado": {k: mapa[k]["valor"] for k in ("numero", "complemento", "referencia") if k in mapa}}
     if not args.gravar:
         return None
-    clicar_texto(page, r"^\s*Salvar\s*$", "salvar")  # só este endereço (sem "Atualizar Todos")
+    clicar_salvar_do_painel(page, dialogo)  # só este endereço (sem "Atualizar Todos")
     try:
         dialogo.wait_for(state="hidden", timeout=10000)
     except Exception:  # noqa: BLE001 - a conferência no fim decide
