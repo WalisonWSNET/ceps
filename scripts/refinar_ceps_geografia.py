@@ -83,7 +83,7 @@ class MapaBairros:
         return self.cache[k]
 
 
-def candidatos(idx, cidade, endereco, numero):
+def candidatos(idx, cidade, endereco, numero, ignorar_tipo=False):
     """Entradas da lista dos Correios que servem para a rua e o número do cliente."""
     tipo, nome = base.separa_tipo(endereco)
     k = base.chave(nome)
@@ -91,7 +91,7 @@ def candidatos(idx, cidade, endereco, numero):
     if not cands:
         p = difflib.get_close_matches(k, list(idx.get(cidade, {}).keys()), n=1, cutoff=0.88)
         cands = idx[cidade][p[0]] if p else []
-    if tipo:
+    if tipo and not ignorar_tipo:
         mesmo = [e for e in cands if e["tipo"] == tipo]
         cands = mesmo or cands
     n = base.numero(numero)
@@ -178,6 +178,14 @@ def main(entrada, ref_path, saida):
         else:
             cands = candidatos(idx, cidade, r["endereco"], r.get("numero"))
             sug, st, dist, bco, alt, motivo = decidir(r, cands, mapa, cidade)
+            if not sug:
+                # o cadastro pode ter o tipo da via errado (ex.: "AV. SOROCABANA" é no Cibratel II, "RUA SOROCABANA" no Gaivota):
+                # se, sem olhar o tipo, o bairro cadastrado do cliente (ou a coordenada) aponta um CEP, usa esse
+                cands2 = candidatos(idx, cidade, r["endereco"], r.get("numero"), ignorar_tipo=True)
+                if len(cands2) > len(cands):
+                    s2 = decidir(r, cands2, mapa, cidade)
+                    if s2[0] and s2[5] == "bairro_cadastrado_bate":
+                        sug, st, dist, bco, alt, motivo = s2[0], s2[1], s2[2], s2[3], s2[4], "tipo_da_via_diferente_" + s2[5]
             confiavel = status_atual in CONFIAVEIS
             if sug and sug == atual:
                 acao = "manter"

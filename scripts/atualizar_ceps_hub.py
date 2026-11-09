@@ -35,6 +35,9 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import atualizar_ceps as ref_ceps  # noqa: E402  (lista dos Correios: faixas de numeração e bairros)
+
 HUB = "https://wsnet.hubsoft.com.br/"
 PERFIL = Path(".perfil")  # mesmo perfil do codegen (login já feito)
 LOGS = Path("logs")
@@ -541,7 +544,35 @@ NUCLEO = ("cep", "estado", "cidade", "bairro", "logradouro", "numero")
 MESCLAR = ("complemento", "referencia")
 
 
-def mesclar_enderecos(todos):
+def carregar_por_cep(caminho):
+    """cep -> entradas da lista dos Correios (rua, faixa de numeração, bairro). {} se o arquivo não existir."""
+    if not Path(caminho).exists():
+        return {}
+    por_cep = defaultdict(list)
+    for cidade in ref_ceps.carrega_ref(caminho).values():
+        for entradas in cidade.values():
+            for e in entradas:
+                por_cep[e["cep"]].append(e)
+    return por_cep
+
+
+def cep_valido_para_endereco(por_cep, cep, endereco, numero):
+    """A lista dos Correios diz que este CEP serve para a rua E o número do cliente? Devolve a entrada ou None."""
+    n = ref_ceps.numero(numero)
+    _, nome = ref_ceps.separa_tipo(endereco or "")
+    k = ref_ceps.chave(nome)
+    for e in por_cep.get(so_digitos(cep), []):
+        if (e["k"] == k or difflib.SequenceMatcher(None, e["k"], k).ratio() >= 0.88) and ref_ceps.serve(e, n):
+            return e
+    return None
+
+
+def bairro_combina(a, b, minimo=0.6):
+    ta, tb = ref_ceps.tokens_bairro(a or ""), ref_ceps.tokens_bairro(b or "")
+    return bool(ta | tb) and len(ta & tb) / len(ta | tb) >= minimo
+
+
+def mesclar_enderecos(todos, bairros_novo_cep=None):
     """Se os endereços só diferem em complemento/referência, devolve o valor a usar em todos (o preenchido).
     Qualquer outra diferença, ou dois valores preenchidos diferentes, vira ErroPulavel."""
     mapas = {t: {k: c["valor"].strip() for k, c in mapear(cs).items()} for t, cs in todos.items()}
@@ -549,6 +580,12 @@ def mesclar_enderecos(todos):
         valores_ = {so_digitos(m.get(chave, "")) if chave == "cep" else re.sub(r"\s+", " ", m.get(chave, "")).casefold()
                     for m in mapas.values()}
         if len(valores_) > 1:
+            if chave == "bairro" and bairros_novo_cep:
+                # vale o Cadastral e a Instalação: se o bairro do CEP novo (lista dos Correios) combina com o de algum deles,
+                # mantém o CEP novo (o "Atualizar Todos" unifica os 4 endereços)
+                prioritarios = [m.get("bairro", "") for t, m in mapas.items() if norm_txt(t).startswith(("instalacao", "cadastral"))]
+                if any(bairro_combina(b, n) for b in prioritarios for n in bairros_novo_cep):
+                    continue
             raise ErroPulavel(f"enderecos_diferentes_{chave}:" + " | ".join(sorted(valores_))[:200])
     auto = {frozenset((c["rotulo"], c["valor"].strip()) for c in cs
                       if c["tipo"] == "search" and not derivado(c)) for cs in todos.values()}
@@ -876,6 +913,10 @@ def processar(page, linha, args, tela):
         if args.aceitar_cep_atual and args.id and atual:  # corrigir um CEP gravado errado: parte do que está no Hub
             antigo = atual
         else:
+            e = cep_valido_para_endereco(args.por_cep, atual, linha.get("endereco"), linha.get("numero"))
+            if e:  # o CEP que já está no Hub é o da lista para esta rua e este número: não muda nada
+                return "ja_atualizado", {"cep_cartao": atual, "cep_planilha": novo, "motivo": "hub_ja_tem_cep_valido_pela_lista",
+                                         "lista": e["txt"]}
             return "cep_divergente", {"cep_cartao": atual, "cep_planilha": antigo}
 
     abrir_aba_enderecos(page, cartao)
@@ -919,7 +960,7 @@ def processar(page, linha, args, tela):
 
     if todos_lidos is not None:  # junta o Cadastral (lido agora) aos outros 3 e decide o que mesclar
         todos_lidos["cadastral"] = campos
-        mesclado = mesclar_enderecos(todos_lidos)
+        mesclado = mesclar_enderecos(todos_lidos, {e["bairro_txt"] for e in args.por_cep.get(novo, [])})
 
     # campos de autocompletar (ex.: Condomínio) só guardam o valor ao escolher uma opção da lista:
     # se estiverem preenchidos, o robô não consegue recolocá-los com segurança -> deixa para ver à mão
@@ -1026,6 +1067,8 @@ def diagnostico(page):
 
 def texto_observacao(status, det):
     """Texto curto para a coluna de observações da planilha ('' = nada a anotar)."""
+    if status == "ja_atualizado" and det.get("motivo"):
+        return f"ja_atualizado: Hub já tem {det['cep_cartao']}, válido pela lista dos Correios ({det.get('lista')}); a planilha dizia {det.get('cep_planilha')}"[:300]
     if status in FEITOS or status == "confere":
         conflitos = (det.get("mesclado") or {}).get("_conflitos")
         if conflitos:
@@ -1197,6 +1240,9 @@ def executar(args):
     DEPURAR = args.depurar
     todas = ler_linhas(args.csv)
     args.bairros = construir_bairros(todas)
+    args.por_cep = carregar_por_cep(args.ceps_ref)
+    if not args.por_cep:
+        print(f"AVISO: lista dos Correios não encontrada em {args.ceps_ref}; as regras que dependem dela ficam desligadas")
     colunas = list(todas[0].keys()) if todas else []
     if any(c and c.strip().lower() == args.coluna_check.lower() for c in colunas):
         n_marcadas = sum(marcado(r, args.coluna_check) for r in todas)
@@ -1499,6 +1545,8 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--ceps-ref", default="data/ceps_logradouros.csv",
+                    help="lista dos Correios (para a faixa de numeração e o bairro de cada CEP)")
     ap.add_argument("--travado-min", type=int, default=8, metavar="MIN",
                     help="se um cliente ficar MIN minutos sem avançar (página congelada), salva e encerra com código 3 (0 = desligado; padrão 8)")
     ap.add_argument("--incluir-verdes", action="store_true",
