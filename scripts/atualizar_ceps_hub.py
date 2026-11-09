@@ -572,6 +572,14 @@ def bairro_combina(a, b, minimo=0.6):
     return bool(ta | tb) and len(ta & tb) / len(ta | tb) >= minimo
 
 
+def chave_logradouro(v):
+    """Nome da rua sem o tipo ("r." = "rua") e sem número colado no fim ("garcia 465"): é a mesma rua escrita de outro jeito."""
+    toks = [t for t in norm_txt(v).split() if t not in TIPOS_VIA and t not in PARTICULAS]
+    while len(toks) > 2 and toks[-1].isdigit():
+        toks.pop()
+    return " ".join(toks)
+
+
 def em_regiao(cep):
     cep = so_digitos(cep)
     return len(cep) == 8 and 11730000 <= int(cep) <= 11799999  # Mongaguá, Itanhaém, Peruíbe
@@ -582,7 +590,9 @@ def mesclar_enderecos(todos, bairros_novo_cep=None, cep_novo=None):
     Qualquer outra diferença, ou dois valores preenchidos diferentes, vira ErroPulavel."""
     mapas = {t: {k: c["valor"].strip() for k, c in mapear(cs).items()} for t, cs in todos.items()}
     for chave in NUCLEO:
-        valores_ = {so_digitos(m.get(chave, "")) if chave == "cep" else re.sub(r"\s+", " ", m.get(chave, "")).casefold()
+        valores_ = {so_digitos(m.get(chave, "")) if chave == "cep"
+                    else chave_logradouro(m.get(chave, "")) if chave == "logradouro"
+                    else re.sub(r"\s+", " ", m.get(chave, "")).casefold()
                     for m in mapas.values()}
         if len(valores_) > 1:
             if chave == "cep" and cep_novo and cep_novo in valores_ and all(em_regiao(v) for v in valores_):
@@ -918,15 +928,17 @@ def linhas_de_endereco(page):
     return saida
 
 
+def enderecos_alvo(linhas):
+    """Tipos de endereço com CEP das 3 cidades, na ordem Instalação > Cadastral > Cobrança > Fiscal.
+    `linhas` = {tipo: (cep, texto)}."""
+    achados = [(next((i for i, p in enumerate(PRIORIDADE_ENDERECO) if norm_txt(tipo).startswith(p)), 9), tipo)
+               for tipo, (cep, _) in linhas.items() if em_regiao(cep)]
+    return [t for _, t in sorted(achados)]
+
+
 def escolher_endereco_alvo(linhas):
-    """O endereço que deve mudar: o de uma das 3 cidades (CEP entre 11730000 e 11799999), na ordem Instalação > Cadastral > Cobrança >
-    Fiscal. `linhas` = {tipo: (cep, texto)}. Devolve o tipo ou None."""
-    candidatos = []
-    for tipo, (cep, _) in linhas.items():
-        ordem = next((i for i, p in enumerate(PRIORIDADE_ENDERECO) if norm_txt(tipo).startswith(p)), 9)
-        if len(cep) == 8 and 11730000 <= int(cep) <= 11799999:  # Mongaguá (1173x), Itanhaém (1174x), Peruíbe (1175x-1179x)
-            candidatos.append((ordem, tipo))
-    return min(candidatos)[1] if candidatos else None
+    alvos = enderecos_alvo(linhas)
+    return alvos[0] if alvos else None
 
 
 def abrir_linha_do_tipo(page, tipo):
@@ -940,30 +952,21 @@ def abrir_linha_do_tipo(page, tipo):
     raise ErroPulavel(f"linha_{tipo}_nao_encontrada")
 
 
-def processar_um_endereco(page, linha, args, tela, cartao):
-    """Muda SÓ UM endereço (o de uma das 3 cidades; Instalação tem prioridade) e salva com 'Salvar', sem 'Atualizar Todos'.
-    Para clientes que têm Cadastral/Fiscal/Cobrança em outra cidade (ex.: Barueri). Use com --id e confira o resultado.
-    Decide pela lista de endereços (sem abrir formulários: fechar o do Cadastral derruba a janela do serviço)."""
-    novo = so_digitos(linha["cep_novo"])
-    lista = linhas_de_endereco(page)
-    alvo = escolher_endereco_alvo(lista)
-    if not alvo:
-        raise ErroPulavel("nenhum_endereco_da_regiao")
-    cep_alvo = lista[alvo][0]
-    if cep_alvo == novo:
-        return "ja_atualizado", {"endereco_alterado": alvo}
-    dialogo = abrir_linha_do_tipo(page, alvo)
+def editar_um_endereco(page, linha, args, tipo, cep_lista, novo, detalhes):
+    """Edita e salva (só com 'Salvar') o endereço deste tipo. Devolve None se deu certo (ou se simulou) ou
+    (status, detalhes) se este endereço deve ficar como está."""
+    dialogo = abrir_linha_do_tipo(page, tipo)
     esperar_estabilizar(page, dialogo, minimo_ms=600)
     campos = ler_campos(dialogo)
     mapa = mapear(campos)
-    if so_digitos(mapa["cep"]["valor"]) != cep_alvo:
-        return "cep_formulario_divergente", {"cep_formulario": mapa["cep"]["valor"], "cep_lista": cep_alvo, "endereco": alvo}
+    if so_digitos(mapa["cep"]["valor"]) != cep_lista:
+        return "cep_formulario_divergente", {"cep_formulario": mapa["cep"]["valor"], "cep_lista": cep_lista, "endereco": tipo}
     n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
     if n_hub != n_plan:
-        return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero"), "endereco": alvo}
+        return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero"), "endereco": tipo}
     auto = {c["rotulo"]: c["valor"].strip() for c in campos if c["tipo"] == "search" and not derivado(c) and c["valor"].strip()}
     if auto:
-        return "campo_autocompletar_preenchido", dict(auto, endereco=alvo)
+        return "campo_autocompletar_preenchido", dict(auto, endereco=tipo)
     guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
     atual = mapear(ler_campos(dialogo))
     motivo, info_div = avaliar_divergencia(
@@ -971,39 +974,72 @@ def processar_um_endereco(page, linha, args, tela, cartao):
         {k: atual[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in atual},
         linha.get("cidade"), args.bairros, args.bairro_perto_km, args.rua_parecida)
     if motivo:
-        return motivo, info_div
+        return motivo, dict(info_div, endereco=tipo)
     esp = esperados_do_formulario(guardar, None)
     recolocados = garantir_formulario(page, dialogo, esp)
-    detalhes = {"endereco_alterado": alvo, "lista_antes": {t: v[0] for t, v in lista.items()}, "antes": antes, "final": final,
-                "rua_bairro": info_div}
-    if recolocados:
-        detalhes["recolocados_antes_de_gravar"] = recolocados
+    detalhes.setdefault("alterados", {})[tipo] = {"antes": antes, "final": final, "rua_bairro": info_div,
+                                                   "recolocados": recolocados, "esperado": {k: mapa[k]["valor"] for k in ("numero", "complemento", "referencia") if k in mapa}}
     if not args.gravar:
-        return "simulado_ok", detalhes
+        return None
     clicar_texto(page, r"^\s*Salvar\s*$", "salvar")  # só este endereço (sem "Atualizar Todos")
     try:
         dialogo.wait_for(state="hidden", timeout=10000)
-    except Exception:  # noqa: BLE001 - a conferência abaixo decide
+    except Exception:  # noqa: BLE001 - a conferência no fim decide
         pass
     page.wait_for_timeout(1500)
+    return None
+
+
+def processar_um_endereco(page, linha, args, tela, cartao):
+    """Muda SÓ os endereços das 3 cidades (Instalação > Cadastral > Cobrança > Fiscal), cada um com 'Salvar' e sem
+    'Atualizar Todos' (que copiaria para os endereços de outra cidade). Decide pela lista, sem abrir formulários.
+    Use com --id e confira o resultado no Hub."""
+    novo = so_digitos(linha["cep_novo"])
+    lista = linhas_de_endereco(page)
+    alvos = enderecos_alvo(lista)
+    if not alvos:
+        raise ErroPulavel("nenhum_endereco_da_regiao")
+    pendentes = [t for t in alvos if lista[t][0] != novo]
+    detalhes = {"lista_antes": {t: v[0] for t, v in lista.items()}, "enderecos_a_alterar": pendentes}
+    if not pendentes:
+        return "ja_atualizado", detalhes
+    pulados = {}
+    for k, tipo in enumerate(pendentes):
+        if k:  # depois de salvar, volta ao serviço (o Hub às vezes derruba a janela)
+            cartao = abrir_servico(page, linha)
+            abrir_aba_enderecos(page, cartao)
+        res = editar_um_endereco(page, linha, args, tipo, lista[tipo][0], novo, detalhes)
+        if res:
+            pulados[tipo] = res
+            continue
+        if not args.gravar:  # na simulação o formulário fica aberto: só o primeiro
+            return "simulado_ok", detalhes
+    if pulados:
+        detalhes["pulados"] = {t: r[0] for t, r in pulados.items()}
+    if not detalhes.get("alterados"):
+        status, det = next(iter(pulados.values()))
+        return status, det
     marca("gravar")
-    # conferência: reabre o serviço, confere a lista e relê o formulário do endereço alterado
+    # conferência: reabre o serviço e confere a lista e os campos de cada endereço alterado
     cartao = abrir_servico(page, linha)
     abrir_aba_enderecos(page, cartao)
     lista2 = linhas_de_endereco(page)
     for t, (cep_antes, _) in lista.items():
-        esperado = novo if t == alvo else cep_antes
+        esperado = novo if t in detalhes["alterados"] else cep_antes
         if lista2.get(t, ("",))[0] != esperado:
             raise ErroPulavel("verificacao_cep_nao_confere:" + json.dumps(
-                {"endereco": t, "esperado": esperado, "achado": lista2.get(t, ("",))[0], "antes": antes}, ensure_ascii=False)[:800])
-    dialogo2 = abrir_linha_do_tipo(page, alvo)
-    esperar_estabilizar(page, dialogo2, minimo_ms=800)
-    m2 = mapear(ler_campos(dialogo2))
-    for chave in ("numero", "complemento", "referencia"):
-        e, a = norm_campo(mapa[chave]["valor"]), norm_campo(m2.get(chave, {}).get("valor", ""))
-        if e != a:
-            raise ErroPulavel(f"verificacao_{chave}_nao_confere:" + json.dumps(
-                {"endereco": alvo, "esperado": e, "achado": a, "antes": antes}, ensure_ascii=False)[:800])
+                {"endereco": t, "esperado": esperado, "achado": lista2.get(t, ("",))[0], "detalhes": detalhes}, ensure_ascii=False)[:1500])
+    for tipo, info in detalhes["alterados"].items():
+        dialogo2 = abrir_linha_do_tipo(page, tipo)
+        esperar_estabilizar(page, dialogo2, minimo_ms=800)
+        m2 = mapear(ler_campos(dialogo2))
+        for chave, valor in info["esperado"].items():
+            e, a = norm_campo(valor), norm_campo(m2.get(chave, {}).get("valor", ""))
+            if e != a:
+                raise ErroPulavel(f"verificacao_{chave}_nao_confere:" + json.dumps(
+                    {"endereco": tipo, "esperado": e, "achado": a, "antes": info["antes"]}, ensure_ascii=False)[:1500])
+        if len(detalhes["alterados"]) > 1:  # sai do painel sem gravar para abrir o próximo
+            fechar_formulario(page, dialogo2)
     marca("verificacao")
     return "ok", detalhes
 
