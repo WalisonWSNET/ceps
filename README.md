@@ -17,16 +17,26 @@ Na pasta `ceps`, com o `.venv` ativo (`.\.venv\Scripts\Activate.ps1`) e depois d
 ```
 $base = 'data/clientes_novo.csv --todos --gravar --continuar-no-erro --tempos --navegador chromium --travado-min 4 --reiniciar 25 --planilha ID_DA_PLANILHA'
 $inicio = Get-Date '08:00'; $meio = Get-Date '16:55'; $fim = Get-Date '22:00'
+function Rodar-Etapa($extra, $ate, $limite) {
+  $tent = 0
+  while ((Get-Date) -lt $limite -and $tent -lt 6) {
+    $t0 = Get-Date
+    Invoke-Expression "python scripts/atualizar_ceps_hub.py $base $extra --ate $ate"
+    $c = $LASTEXITCODE
+    if ($c -notin 1,3) { break }                                   # fim normal, PARANDO ou horário limite: não repete
+    if (((Get-Date) - $t0).TotalMinutes -gt 30) { $tent = 0 } else { $tent++ }   # rodou bem por 30 min: zera as tentativas
+    Start-Sleep -Seconds 20
+  }
+}
 if ((Get-Date) -lt $inicio) { Start-Sleep -Seconds ([int]($inicio - (Get-Date)).TotalSeconds) }
-if ((Get-Date) -lt $meio) {
-  do { Invoke-Expression "python scripts/atualizar_ceps_hub.py $base --ate 16:55"; $c = $LASTEXITCODE } while ($c -eq 3 -and (Get-Date) -lt $meio)
-}
-if ((Get-Date) -lt $fim) {
-  do { Invoke-Expression "python scripts/atualizar_ceps_hub.py $base --prioridade-normal --ate 22:00"; $c = $LASTEXITCODE } while ($c -eq 3 -and (Get-Date) -lt $fim)
-}
+if ((Get-Date) -lt $meio) { Rodar-Etapa '' '16:55' $meio }
+if ((Get-Date) -lt $fim) { Rodar-Etapa '--prioridade-normal' '22:00' $fim }
 ```
 - Até 16:55 o robô roda com prioridade baixa (o PC fica mais livre); depois, prioridade normal até as 22:00.
-- Código de saída 3 = o robô travou ou o navegador caiu; o laço religa sozinho.
+- Código de saída 3 = o robô travou ou o navegador caiu; código 1 = erro inesperado. Nos dois casos o laço espera 20 s e religa sozinho.
+- Limite de 6 tentativas seguidas por etapa (evita ficar em loop se o problema não passa). Se o robô trabalhar mais de 30 minutos seguidos, o contador zera.
+- Não religa quando a saída foi normal (horário limite, fila acabou) nem quando o robô parou de propósito (`PARANDO`: login caído, 3 erros seguidos, 25 clientes sem concluir).
+- Dormir o PC derruba tudo: desligar a suspensão enquanto o robô roda (`powercfg /change standby-timeout-ac 0`).
 - Antes de religar: fechar o Chromium antigo do robô:
   `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*ms-playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
 - Login no Hub: na janela do Chromium, fazer o login completo e só depois apertar ENTER no terminal.
