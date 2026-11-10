@@ -1842,6 +1842,17 @@ def main(argv=None):
         executar(args)
     except ErroFatal as e:
         sys.exit(f"ERRO FATAL: {e}")
+    except Exception as e:  # noqa: BLE001
+        # falha passageira do navegador/Hub fora do tratamento por cliente (ex.: abrir o navegador depois do reinício a cada N
+        # clientes deu timeout): mostra o erro, espera um pouco e sai com código 3 para o laço do comando religar o robô
+        if re.search(r"Timeout|Connection closed|Target (page, context or browser )?(has been )?closed|net::ERR", f"{type(e).__name__} {e}", re.I):
+            import traceback
+
+            traceback.print_exc()
+            print(f"\nFalha passageira do navegador/Hub ({datetime.now():%d/%m %H:%M}); reiniciando o robô em 30 s (código 3).", flush=True)
+            time.sleep(30)
+            os._exit(3)
+        raise
 
 
 if __name__ == "__main__":
