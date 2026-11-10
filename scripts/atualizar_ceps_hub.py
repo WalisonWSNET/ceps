@@ -1541,7 +1541,15 @@ def executar(args):
         page.on("dialog", ao_dialogo)  # "sair da página?" ao descartar formulário
         page.on("response", lambda r: (RESPOSTAS.append((time.time(), r.status, r.url[-70:])), RESPOSTAS[:-60] and RESPOSTAS.__delitem__(slice(0, -60))))
         page.on("request", lambda r: (PEDIDOS.append((time.time(), r.method, r.url[-90:])), PEDIDOS[:-40] and PEDIDOS.__delitem__(slice(0, -40))))
-        page.goto(HUB)
+        for tentativa in range(3):  # navegador novo + PC/Hub lento: o "load" do Hub passa dos 20 s; tem mais tempo e tenta de novo
+            try:
+                page.goto(HUB, wait_until="domcontentloaded", timeout=60000)
+                break
+            except Exception as e:  # noqa: BLE001
+                if tentativa == 2 or "Timeout" not in f"{type(e).__name__} {e}":
+                    raise
+                print(f"   o Hub demorou para abrir ({tentativa + 1}/3); tentando de novo", flush=True)
+        page.wait_for_timeout(2500)  # dá tempo de um redirecionamento para /login aparecer
         if args.sem_janela and "/login" in page.url:
             raise ErroFatal("a sessão do Hub caiu e --sem-janela não consegue logar: rode uma vez sem --sem-janela, faça o login e depois volte")
         if pedir_login and "/login" in page.url:
