@@ -1609,9 +1609,11 @@ def executar(args):
                     finally:
                         os._exit(3)
                 tela.mkdir(parents=True, exist_ok=True)
+                sem_resposta = False
                 try:
                     page.screenshot(path=str(tela / f"{idcs}_erro_{datetime.now():%H%M%S}.png"))
                 except Exception as e2:  # noqa: BLE001
+                    sem_resposta = True  # a página não respondeu nem a uma captura: provavelmente congelada
                     print(f"   não consegui salvar a captura: {type(e2).__name__}: {str(e2)[:150]}")
                 if "/login" in page.url:
                     print(f"[{n}/{len(fila)}] {idcs}: o Hub voltou para a tela de login ({datetime.now():%d/%m %H:%M}); "
@@ -1621,7 +1623,25 @@ def executar(args):
                 print(f"[{n}/{len(fila)}] {idcs}: ERRO inesperado: {type(e).__name__}: {str(e)[:200]}")
                 print(f"   página no momento do erro: {page.url}")
                 print(f"   captura: {tela}  (arquivo {idcs}_erro_HHMMSS.png)")
-                diagnostico(page)
+                if sem_resposta:
+                    # o diagnóstico (page.evaluate) não tem tempo limite e ficaria preso numa página congelada (o vigia levava 4 min
+                    # para reiniciar); reabre o navegador na hora
+                    print("   a página não respondeu; reabrindo o navegador", flush=True)
+                    try:
+                        try:
+                            ctx.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        ctx, page = abrir(p, pedir_login=False)
+                    except Exception as e3:  # noqa: BLE001
+                        print(f"   não consegui reabrir o navegador ({type(e3).__name__}); reiniciando o robô (código 3)", flush=True)
+                        try:
+                            if marcador:
+                                marcador.enviar()
+                        finally:
+                            os._exit(3)
+                else:
+                    diagnostico(page)
                 erros_seguidos += 1
                 if not args.continuar_no_erro or erros_seguidos >= 3:
                     print("Parando. Veja logs/telas/ e o log.")
