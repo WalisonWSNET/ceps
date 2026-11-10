@@ -1,4 +1,83 @@
 # ceps
+
+Atualiza o CEP dos serviços de clientes (Itanhaém, Mongaguá e Peruíbe) no Hubsoft, trocando o CEP genérico da cidade pelo CEP
+da rua (lista dos Correios), sem perder número, complemento e referência. O robô (Playwright) edita o endereço no Hub, confere o
+resultado e marca `feito` / escreve `obs_robo` na planilha do Google.
+
+## Arquivos
+- `scripts/atualizar_ceps_hub.py`: o robô.
+- `scripts/atualizar_ceps.py`: casa cada cliente com o CEP da rua (gera `cep_novo`, `status_cep`, `ceps_candidatos`).
+- `scripts/refinar_ceps_geografia.py` e `scripts/aplicar_refinamento_planilha.py`: usam a coordenada do cliente para escolher o CEP.
+- `scripts/pendencias.py`: listas de revisão a partir do CSV exportado (só leitura).
+- `data/ceps_logradouros.csv`: lista dos Correios. Os dados de clientes (`data/clientes*.csv`) e `logs/` **nunca** vão para o GitHub.
+
+## Rodar o robô no dia a dia
+Na pasta `ceps`, com o `.venv` ativo (`.\.venv\Scripts\Activate.ps1`) e depois de `git pull`:
+
+```
+$base = 'data/clientes_novo.csv --todos --gravar --continuar-no-erro --tempos --navegador chromium --travado-min 4 --reiniciar 25 --planilha ID_DA_PLANILHA'
+$inicio = Get-Date '08:00'; $meio = Get-Date '16:55'; $fim = Get-Date '22:00'
+if ((Get-Date) -lt $inicio) { Start-Sleep -Seconds ([int]($inicio - (Get-Date)).TotalSeconds) }
+if ((Get-Date) -lt $meio) {
+  do { Invoke-Expression "python scripts/atualizar_ceps_hub.py $base --ate 16:55"; $c = $LASTEXITCODE } while ($c -eq 3 -and (Get-Date) -lt $meio)
+}
+if ((Get-Date) -lt $fim) {
+  do { Invoke-Expression "python scripts/atualizar_ceps_hub.py $base --prioridade-normal --ate 22:00"; $c = $LASTEXITCODE } while ($c -eq 3 -and (Get-Date) -lt $fim)
+}
+```
+- Até 16:55 o robô roda com prioridade baixa (o PC fica mais livre); depois, prioridade normal até as 22:00.
+- Código de saída 3 = o robô travou ou o navegador caiu; o laço religa sozinho.
+- Antes de religar: fechar o Chromium antigo do robô:
+  `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*ms-playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
+- Login no Hub: na janela do Chromium, fazer o login completo e só depois apertar ENTER no terminal.
+- Resumo e produção: `python scripts/atualizar_ceps_hub.py data/clientes_novo.csv --resumo`. Por dia, pelo log:
+  `Import-Csv logs\log_ceps.csv | Group-Object { $_.data_hora.Substring(0,10) }`.
+- Estatísticas do projeto até 10/11: ~8.950 serviços concluídos pelo robô, ~1.130 a 1.400 por dia, fila restante ~5.000.
+
+## O que cada status quer dizer
+- Concluídos (marcam `feito`): `ok` (gravou e conferiu) e `ja_atualizado` (o Hub já estava certo).
+- Pulados de propósito, sem alterar nada: `bairro_longe`, `rua_e_bairro_divergem`, `numero_divergente`, `cep_divergente`,
+  `cep_formulario_divergente`, `cidade_mudou`, `enderecos_diferentes_*` (cep, numero, logradouro, bairro, condominio, cidade),
+  `campo_autocompletar_preenchido`, `servico_nao_encontrado`, `sem_servico_ativo`, `observacoes_nao_fechou`.
+- Alarmes (2 seguidos param o robô): `verificacao_*`, `restauracao_*`, `cep_nao_ficou*`, `botao_*`, `campo_sumiu_*`, `formulario*`.
+- `erro`: falha passageira (Hub lento, timeout). Volta na fila. O robô para depois de 3 seguidos.
+
+## Regras que o robô aplica
+- Preserva número, complemento e referência. Complemento/referência diferentes entre os 4 endereços: um preenchido, copia para todos; dois valores diferentes, deixa em branco.
+- O bairro só pode mudar para um bairro perto (até 3 km). Só a rua mudar pode.
+- Se o CEP atual do Hub já serve para a rua e o número pela lista dos Correios (faixa de numeração), não muda (`ja_atualizado`).
+- Entre os 4 endereços, passam como iguais: "r." = "rua", doutor = dr, "Oásis" = "Jardim Oásis", "Balneário Gaivota" = "Gaivota (Praia)", pequena diferença de grafia em nomes longos. Avenida e Rua são diferentes.
+- CEPs diferentes entre os endereços passam se um já é o CEP novo e todos são das 3 cidades (CEP de 11730000 a 11799999).
+- Verde na coluna `cep_novo` da planilha = já correto no Hub; o robô ignora.
+- Clientes com endereços em outra cidade (ex.: Barueri): `--so-um-endereco` com `--id`. Altera só os endereços das 3 cidades (Instalação, Cadastral, Cobrança, Fiscal), cada um com "Salvar", sem "Atualizar Todos".
+- Clientes já revisados por você: `--aceitar-bairro` com `--id` grava mesmo com bairro longe ou bairros diferentes entre os endereços.
+
+## Plano para fechar o projeto (depois que a fila automática acabar, ~13 a 16/11)
+**Fase 1: fotografar o estado**
+1. Deixar o robô terminar (`Faltam 0`).
+2. `--resumo` e exportar o CSV novo da planilha com um nome novo (ex.: `clientes_fim.csv`).
+3. `python scripts/pendencias.py data/clientes_fim.csv` (listas em `logs\pendencias\`).
+
+**Fase 2: pulados do robô (~750)**
+1. Rodar uma vez `--refazer-pulados` (as regras novas devem resolver parte):
+   `python scripts/atualizar_ceps_hub.py data/clientes_fim.csv --todos --refazer-pulados --gravar --continuar-no-erro --tempos --navegador chromium --planilha ID_DA_PLANILHA`
+2. `bairro_longe` (~390): os 4 revisados até agora eram "mantém o CEP da planilha". Conferir uma amostra de 20 (ordenada pela distância em `obs_robo`); se 90% ou mais forem "mantém", rodar o restante com `--aceitar-bairro --id ...`. Acima de ~5 km, revisar um a um.
+3. `campo_autocompletar_preenchido` (~90): ver à mão. `sem_servico_ativo` (~80): cancelados, em geral ignorar. `servico_nao_encontrado` (~47): conferir o ID no Hub.
+4. Grupo C: serviços 69951 e 56822 (cliente 35817), 58300 (cliente 34088), 19400 (cliente 22654), 3976 (cliente 4142).
+
+**Fase 3: linhas que nunca entraram na fila (só na planilha)**
+- `numero_fora_da_faixa` (157): a rua existe, o CEP certo costuma estar em `ceps_candidatos`. O mais barato.
+- `ambiguo` (~1.080) e `ceps_candidatos` (~1.200): escolher o CEP entre as opções.
+- `nao_encontrado` (~1.580): rua com grafia diferente ou nova. O mais trabalhoso.
+- `fora_do_escopo` (~1.665): outras cidades. Ignorar.
+- CEP genérico ainda em `cep_novo` (~2.280) e CEPs suspeitos (~820, sendo ~60 `nao_bate`).
+- Para cada linha corrigida: preencher `cep_novo` e `status_cep = conferido_manual`; exportar o CSV e rodar o robô (elas entram na fila).
+
+**Fase 4: conferência por amostra**
+- `--conferir-marcados` (só leitura) compara o CEP do Hub com o da planilha. Fazer uma amostra de 300 a 500 (todos levariam ~20 horas). Nos primeiros 533, 524 estavam certos.
+
+**Fase 5: encerramento**: a seção abaixo.
+
 ## Encerramento (fazer ao terminar o processo)
 
 ### Trabalho que falta fechar
