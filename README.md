@@ -14,6 +14,7 @@ resultado e marca `feito` / escreve `obs_robo` na planilha do Google.
 - `scripts/aplicar_sugestoes.py`: grava na planilha as sugestões validadas (`cep_novo` + `status_cep = conferido_manual`), com backup.
 - `scripts/auditar_verdes.py`: audita os serviços com `cep_novo` em verde (quantos têm CEP genérico, status, etc.). Só leitura.
 - `--conferir-verdes N` (no robô): só leitura; confere no Hub uma amostra de N verdes e compara o CEP do Hub com o `cep_novo`.
+- `scripts/marcar_ja_corretos.py`: marca `feito` nos serviços de status confiável com `cep_novo` igual ao CEP atual (já corretos no Hub). Simula por padrão; confira antes com `--conferir-verdes N`.
 - `scripts/auditar_log.py`: lista serviços já gravados em que um complemento escrito no campo da rua pode ter se perdido. Só leitura.
 - `data/ceps_logradouros.csv`: lista dos Correios. Os dados de clientes (`data/clientes*.csv`) e `logs/` **nunca** vão para o GitHub.
 
