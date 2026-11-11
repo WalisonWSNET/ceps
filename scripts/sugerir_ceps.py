@@ -63,6 +63,20 @@ def montar_indices(idx):
     return fon
 
 
+def palavras_compativeis(a, b, minimo=0.8):
+    """Duas ruas "parecidas" só valem se TODA palavra de um lado tem uma palavra parecida do outro (só grafia).
+    Evita "Josefa Maria da Conceição" x "Josefa Salvina da Conceição" (nome do meio diferente)."""
+    ta, tb = a.split(), b.split()
+
+    def par(t, u):  # grafia parecida, ou abreviação ("gov" = "governador", "eng" = "engenheiro")
+        return difflib.SequenceMatcher(None, t, u).ratio() >= minimo or (min(len(t), len(u)) >= 2 and (u.startswith(t) or t.startswith(u)))
+
+    def cobre(x, y):
+        return all(any(par(t, u) for u in y) for t in x)
+
+    return cobre(ta, tb) and cobre(tb, ta)
+
+
 def candidatos_rua(idx, fon, cidade, nome):
     """[(metodo, chave_lista)] das ruas da lista que podem ser esta rua."""
     k = base.chave(nome)
@@ -81,7 +95,8 @@ def candidatos_rua(idx, fon, cidade, nome):
     chaves_f = list(fon.get(cidade, {}).keys())
     for pf in difflib.get_close_matches(fk, chaves_f, n=3, cutoff=0.86):
         for key in fon[cidade][pf]:
-            add("parecida", key)
+            if palavras_compativeis(base.fonetica(k), base.fonetica(key)):
+                add("parecida", key)
     numerada = any(t in NUM_PALAVRAS for t in k.split())  # "Treze" não pode virar "Três": rua numerada só casa exata/por som
     if len(k) >= 6 and not numerada:
         for key in idx.get(cidade, {}):
@@ -165,12 +180,22 @@ def avaliar(linha, idx, fon, mapa):
             motivo = "varios_ceps_possiveis" if len(bons) > 1 else "bairro_longe_ou_sem_coordenada"
             return dict(saida, confianca="baixa", motivo=motivo)
     o = bons[0]
+    if o["dist"] is not None and o["dist"] > 3:
+        # o bairro do cadastro bate com este CEP, mas a COORDENADA do cliente fica longe dele: se outro CEP da mesma rua que serve o número
+        # fica bem perto da coordenada, é ele (cadastro com bairro errado, ex.: Av. Mário Covas 6380 "Tupi" que na verdade é Jamaica)
+        perto = sorted([x for x in servem if x["dist"] is not None and x["dist"] <= 1.5], key=lambda x: x["dist"])
+        if len(perto) >= 1 and (len(perto) == 1 or perto[1]["dist"] - perto[0]["dist"] >= 0.4):
+            o = dict(perto[0], coord_corrige=True)
+        else:
+            saida["motivo_extra"] = "coordenada_longe_do_bairro"
     vizinho = o["dist"] is not None and o["dist"] <= 3
     coord_ok = o["dist"] is None or o["dist"] <= 3  # bairro igual, mas a coordenada do cliente não pode estar longe dele
-    if numero_ok and o["metodo"] in ("exata", "fonetica") and o["mesmo_bairro"] and coord_ok:
+    if o.get("coord_corrige"):
+        conf = "media"  # a coordenada aponta outro bairro: confirmar no Hub antes de aplicar
+    elif numero_ok and o["metodo"] in ("exata", "fonetica") and o["mesmo_bairro"] and coord_ok:
         conf = "alta"      # a única que sai direto: rua igual (ou igual por som) E bairro igual E número na faixa
-    elif numero_ok and (o["mesmo_bairro"] or vizinho):
-        conf = "media"     # nome parecido, ou só o bairro vizinho, ou a coordenada discorda: validar por amostra
+    elif numero_ok and (o["mesmo_bairro"] or vizinho) and not (o["dist"] is not None and o["dist"] > 3):
+        conf = "media"     # nome parecido, ou só o bairro vizinho: validar por amostra
     else:
         conf = "baixa"
     if not o["qual_ok"]:
@@ -179,7 +204,7 @@ def avaliar(linha, idx, fon, mapa):
         conf = "media"  # o tipo da via (rua/avenida/travessa) do cadastro não é o da lista: conferir no Hub
     motivo = f"rua_{o['metodo']}" + ("+bairro_igual" if o["mesmo_bairro"] else "+bairro_vizinho" if vizinho else "") \
         + ("" if numero_ok else "+numero_fora_da_faixa") + ("+complemento_separado" if compl else "") \
-        + ("" if o["qual_ok"] else "+rua_homonima_de_outro_bairro") + ("+tipo_da_via_difere" if o["tipo_difere"] else "")
+        + ("+coordenada_corrige_bairro" if o.get("coord_corrige") else "") + ("" if o["qual_ok"] else "+rua_homonima_de_outro_bairro") + ("+tipo_da_via_difere" if o["tipo_difere"] else "")
     return dict(saida, cep_proposto=o["cep"], rua_correios=o["txt"].split("; ", 1)[-1].rstrip(")"), bairro_correios=o["bairro"],
                 distancia_km="" if o["dist"] is None else round(o["dist"], 1), metodo=o["metodo"], confianca=conf, motivo=motivo)
 
