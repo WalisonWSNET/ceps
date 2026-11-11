@@ -1289,6 +1289,8 @@ def texto_observacao(status, det):
         info = f"Hub {det.get('numero_hub')!r} x planilha {det.get('numero_planilha')!r}"
     elif status in ("cep_divergente", "cep_formulario_divergente"):
         info = f"Hub {det.get('cep_cartao') or det.get('cep_formulario')} x planilha {det.get('cep_planilha')}"
+    elif status == "confere_generico":
+        info = f"o Hub está com o CEP genérico {det.get('cep_hub')} (igual à planilha, mas não é CEP de rua)"
     elif status == "cep_diferente":
         info = f"marcado como feito, mas o Hub mostra {det.get('cep_hub')} (planilha: {det.get('cep_planilha')})"
     elif status == "campo_autocompletar_preenchido":
@@ -1394,15 +1396,16 @@ def ids_cep_verde(planilha_id, credenciais, aba=None, coluna_cep="cep_novo"):
     return verdes
 
 
+CEPS_GENERICOS = {"11700000", "11730000", "11740000", "11750000"}
 LOG_CONFERENCIA = LOGS / "conferencia.csv"
-CONCLUIDOS = FEITOS | {"confere", "cep_diferente"}
+CONCLUIDOS = FEITOS | {"confere", "cep_diferente", "confere_generico"}
 
 
 def carregar_conferidos():
     if not LOG_CONFERENCIA.exists():
         return set()
     with open(LOG_CONFERENCIA, encoding="utf-8", newline="") as f:
-        return {r["id_cliente_servico"] for r in csv.DictReader(f) if r["status"] in ("confere", "cep_diferente")}
+        return {r["id_cliente_servico"] for r in csv.DictReader(f) if r["status"] in ("confere", "cep_diferente", "confere_generico")}
 
 
 def conferir_cartao(page, linha, args, tela):
@@ -1410,6 +1413,8 @@ def conferir_cartao(page, linha, args, tela):
     OBSERVACOES_LIDAS.clear()
     cartao = abrir_servico(page, linha)
     cep, novo = cep_do_cartao(cartao), so_digitos(linha["cep_novo"])
+    if cep == novo and cep in CEPS_GENERICOS:
+        return "confere_generico", {"cep_hub": cep}  # igual à planilha, mas é o CEP genérico da cidade: não é CEP de rua
     if cep == novo:
         return "confere", {"cep_hub": cep}
     return "cep_diferente", {"cep_hub": cep, "cep_planilha": novo}
@@ -1479,12 +1484,22 @@ def executar(args):
         print(f"AVISO: coluna '{args.coluna_check}' não encontrada; linhas já feitas NÃO serão ignoradas. Colunas: {colunas}")
     linhas = selecionar(todas, set(map(so_digitos, args.id)) if args.id else None,
                         "" if (args.aceitar_cep_atual and args.id) else args.coluna_check)  # "" = ignora a marca em feito
-    if args.conferir_marcados:  # só leitura: confere no Hub os serviços já marcados como feitos
+    if args.conferir_verdes:  # só leitura: confere no Hub uma amostra dos serviços com cep_novo VERDE na planilha
+        if not args.planilha:
+            raise SystemExit("--conferir-verdes precisa de --planilha (lê as cores da planilha)")
+        args.conferir_marcados = True
+        verdes_ids = ids_cep_verde(args.planilha, args.credenciais, args.aba)
+        print(f"{len(verdes_ids)} serviços com cep_novo em verde na planilha")
+    if args.conferir_marcados:  # só leitura: confere no Hub os serviços já marcados como feitos (ou verdes)
         ja = carregar_conferidos()
-        linhas = [r for r in todas if marcado(r, args.coluna_check) and so_digitos(r.get("id_cliente_servico"))
+        linhas = [r for r in todas if ((so_digitos(r.get("id_cliente_servico")) in verdes_ids) if args.conferir_verdes
+                                       else marcado(r, args.coluna_check)) and so_digitos(r.get("id_cliente_servico"))
                   and (r.get("cidade") or "").strip().upper() in CIDADES and len(so_digitos(r.get("cep_novo"))) == 8
                   and (not args.id or so_digitos(r["id_cliente_servico"]) in set(map(so_digitos, args.id)))
                   and so_digitos(r["id_cliente_servico"]) not in ja]
+        if args.conferir_verdes:
+            random.shuffle(linhas)
+            linhas = linhas[:args.conferir_verdes]
     if args.excluir_multi_servico and not args.conferir_marcados and not args.id:
         suspeitos = servicos_multi_numero_diferente(todas)
         fora = [r for r in linhas if so_digitos(r["id_cliente_servico"]) in suspeitos]
@@ -1807,6 +1822,9 @@ def main(argv=None):
                     help="chrome = o Chrome instalado (padrão); chromium = o do Playwright, separado do seu Chrome do dia a dia")
     ap.add_argument("--reiniciar", type=int, default=100, metavar="N",
                     help="reabre o navegador a cada N clientes (0 = nunca; padrão 100)")
+    ap.add_argument("--conferir-verdes", type=int, metavar="N",
+                    help="só leitura: confere no Hub uma amostra de N serviços com cep_novo em VERDE (precisa de --planilha); "
+                         "resultado em logs/conferencia.csv (confere / confere_generico / cep_diferente)")
     ap.add_argument("--sem-janela", action="store_true",
                     help="roda o Chromium sem janela (usa menos do PC). O login do Hub precisa já estar feito no perfil; "
                          "se a sessão cair, o robô avisa em vez de pedir login")
