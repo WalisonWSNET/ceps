@@ -154,6 +154,7 @@ def avaliar(linha, idx, fon, mapa):
         numero_ok = False
     else:
         numero_ok = True
+    saida["numero_na_faixa"] = numero_ok
     # prefere o CEP com bairro igual; senão o mais perto
     bons = [o for o in servem if o["mesmo_bairro"]] or sorted(
         [o for o in servem if o["dist"] is not None and o["dist"] <= 3], key=lambda x: x["dist"])[:1]
@@ -216,6 +217,8 @@ def main():
                 d["confianca"], d["motivo"] = "alta", motivo_d + "+vizinhos_confirmam"
             elif d.get("cep_proposto") == cep_viz and d.get("confianca") in ("media", "baixa") and "numero_fora_da_faixa" not in motivo_d:
                 d["confianca"], d["motivo"] = "media", motivo_d + "+vizinhos_confirmam"  # os vizinhos ajudam, mas há um risco: só media
+            elif d.get("numero_na_faixa") is False:
+                pass  # a lista não tem nenhuma faixa que sirva este número: os vizinhos (de outras numerações) não provam nada
             elif not d.get("cep_proposto") or d.get("confianca") == "baixa":
                 d.update(cep_proposto=cep_viz, metodo="vizinhos", confianca="media", motivo=f"vizinhos_mesma_rua({nviz})",
                          bairro_correios="", rua_correios="(CEP dos vizinhos já resolvidos)")
