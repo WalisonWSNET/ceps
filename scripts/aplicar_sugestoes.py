@@ -34,6 +34,7 @@ def main():
     ap.add_argument("--aba")
     ap.add_argument("--confianca", choices=list(NIVEIS), default="alta", help="até que nível aplicar (padrão: só alta)")
     ap.add_argument("--ids", nargs="+", help="aplica só estes id_cliente_servico (ignora --confianca)")
+    ap.add_argument("--excluir", nargs="+", default=[], help="id_cliente_servico que NÃO devem ser aplicados (ex.: casos que você revisou e quer deixar como estão)")
     ap.add_argument("--forcar-cep-de-rua", action="store_true",
                     help="aplica também onde o cep_novo atual já é de rua (por padrão essas linhas são puladas)")
     ap.add_argument("--gravar", action="store_true")
@@ -45,7 +46,8 @@ def main():
     with open(args.sugestoes, encoding="utf-8", newline="") as f:
         sugestoes = list(csv.DictReader(f))
     ids = set(map(so_digitos, args.ids)) if args.ids else None
-    escolhidas = [r for r in sugestoes if r.get("cep_proposto") and
+    excluir = set(map(so_digitos, args.excluir))
+    escolhidas = [r for r in sugestoes if r.get("cep_proposto") and so_digitos(r["id_cliente_servico"]) not in excluir and
                   ((so_digitos(r["id_cliente_servico"]) in ids) if ids else r.get("confianca") in NIVEIS[args.confianca])]
 
     sh = gspread.service_account(filename=args.credenciais).open_by_key(args.planilha)
