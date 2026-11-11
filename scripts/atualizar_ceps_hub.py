@@ -1165,7 +1165,15 @@ def processar(page, linha, args, tela):
     if auto:
         return "campo_autocompletar_preenchido", auto
 
+    # complemento escrito junto com a rua ("COND. X - APTO 5- AV. Y"): o Hub reescreve o campo da rua ao trocar o CEP, então esse
+    # texto iria embora; passa para o Complemento (junto ao que já existir)
+    _, extra_compl = ref_ceps.extrair_complemento(mapa["logradouro"]["valor"]) if "logradouro" in mapa else ("", "")
     guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
+    if extra_compl:
+        atuais0 = mapear(ler_campos(dialogo))
+        base_comp = (mesclado or {}).get("complemento", atuais0["complemento"]["valor"].strip())
+        novo_comp = base_comp if extra_compl.casefold() in base_comp.casefold() else (f"{base_comp} - {extra_compl}" if base_comp else extra_compl)
+        mesclado = dict(mesclado or {"referencia": atuais0["referencia"]["valor"].strip()}, complemento=novo_comp)
     if mesclado:  # completa o Cadastral com o complemento/referência que só existiam em outro tipo
         atuais = mapear(ler_campos(dialogo))
         for chave in MESCLAR:  # (em conflito o valor é "" e o campo fica em branco)
@@ -1195,6 +1203,8 @@ def processar(page, linha, args, tela):
         detalhes["reaberturas"] = REABERTURAS[0]
     if mesclado:
         detalhes["mesclado"] = mesclado
+    if extra_compl:
+        detalhes["complemento_extraido_da_rua"] = extra_compl
     if todos_lidos:  # tudo o que havia nos 4 endereços, para dar para reconstruir qualquer caso
         detalhes["enderecos_antes"] = {t: valores(cs) for t, cs in todos_lidos.items()}
     esp = esperados_do_formulario(guardar, mesclado)

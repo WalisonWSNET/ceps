@@ -98,6 +98,39 @@ def carrega_ref(path):
     return idx
 
 
+COMPL_RE = re.compile(r"^(cond\w*|bloco\b|bl\b|torre\b|apto?\b|ap\b|apartamento\b|casa\b|fundos\b|quadra\b|qd\b|lote\b|lt\b|"
+                      r"prox\w*|esq\w*|ao lado|em frente|ref\w*|sobrado\b|sala\b|loja\b)", re.I)
+
+
+def extrair_complemento(texto):
+    """'COND. X - BLOCO C - APTO 106- AV. RUI BARBOSA' -> ('AV. RUI BARBOSA', 'COND. X - BLOCO C - APTO 106').
+    Conservador: só separa quando o texto tem partes ligadas por hífen, UMA parte é a via (começa com AV, RUA, TV...) e
+    todas as outras parecem complemento (condomínio, bloco, apto...). Senão devolve (texto, '')."""
+    t = (texto or "").strip()
+    partes = [p.strip(" ,.") for p in re.split(r"\s+[-–]\s*|[-–]\s+", t) if p.strip(" ,.")]
+    if len(partes) < 2:
+        return t, ""
+    comp = [p for p in partes if COMPL_RE.match(sem_acento(p.lower()))]
+    via = [p for p in partes if p not in comp and separa_tipo(p)[0]]
+    if len(via) == 1 and comp and len(via) + len(comp) == len(partes):
+        return via[0], " - ".join(comp)
+    return t, ""
+
+
+def fonetica(s):
+    """Escrita por som, para achar a mesma rua escrita de outro jeito: ss = ç = c = s = z, k = c = qu, y = i, ph = f, letras
+    dobradas, h mudo etc. É agressiva de propósito (só gera candidatos; a confiança vem do bairro e do número).
+    Devolve as palavras ordenadas (como `chave`)."""
+    s = re.sub(r"[^a-z0-9 ]", " ", sem_acento(s.lower().replace("ç", "s")))
+    out = []
+    for t in s.split():
+        t = t.replace("ph", "f").replace("th", "t").replace("sh", "x").replace("ch", "x")
+        t = t.replace("qu", "s").replace("ck", "s")
+        t = t.translate(str.maketrans({"c": "s", "k": "s", "q": "s", "z": "s", "y": "i", "w": "v", "h": ""}))
+        out.append(re.sub(r"(.)\1+", r"\1", t))
+    return " ".join(sorted(out))
+
+
 def numero(s):
     m = re.search(r"\d+", s or "")
     return int(m.group()) if m else None

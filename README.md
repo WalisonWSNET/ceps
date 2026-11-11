@@ -9,6 +9,10 @@ resultado e marca `feito` / escreve `obs_robo` na planilha do Google.
 - `scripts/atualizar_ceps.py`: casa cada cliente com o CEP da rua (gera `cep_novo`, `status_cep`, `ceps_candidatos`).
 - `scripts/refinar_ceps_geografia.py` e `scripts/aplicar_refinamento_planilha.py`: usam a coordenada do cliente para escolher o CEP.
 - `scripts/pendencias.py`: listas de revisão a partir do CSV exportado (só leitura).
+- `scripts/sugerir_ceps.py`: sugere CEP para `nao_encontrado`, `numero_fora_da_faixa` e `ambiguo` (busca flexível: escrita por som
+  ss/ç/y/i, nome parecido, complemento escrito junto com a rua, bairro vizinho, faixa de numeração). Só leitura.
+- `scripts/aplicar_sugestoes.py`: grava na planilha as sugestões validadas (`cep_novo` + `status_cep = conferido_manual`), com backup.
+- `scripts/auditar_log.py`: lista serviços já gravados em que um complemento escrito no campo da rua pode ter se perdido. Só leitura.
 - `data/ceps_logradouros.csv`: lista dos Correios. Os dados de clientes (`data/clientes*.csv`) e `logs/` **nunca** vão para o GitHub.
 
 ## Rodar o robô no dia a dia
@@ -81,7 +85,17 @@ if ((Get-Date) -lt $fim) { Rodar-Etapa '--prioridade-normal' '22:00' $fim }
 - `nao_encontrado` (~1.580): rua com grafia diferente ou nova. O mais trabalhoso.
 - `fora_do_escopo` (~1.665): outras cidades. Ignorar.
 - CEP genérico ainda em `cep_novo` (~2.280) e CEPs suspeitos (~820, sendo ~60 `nao_bate`).
-- Para cada linha corrigida: preencher `cep_novo` e `status_cep = conferido_manual`; exportar o CSV e rodar o robô (elas entram na fila).
+- Sugestões automáticas (busca flexível):
+  1. `python scripts/sugerir_ceps.py data/clientes_hoje.csv` gera `logs/sugestoes/sugestoes.csv` com o CEP proposto, a rua e o bairro dos
+     Correios, a distância e o motivo. Confiança `alta` = rua igual (ou igual por som) + bairro igual + número na faixa;
+     `media` = nome parecido ou bairro vizinho; `baixa` = só consulta.
+  2. Conferir no Hub uma amostra de 20 a 30 (alta e media).
+  3. Simular e gravar: `python scripts/aplicar_sugestoes.py logs/sugestoes/sugestoes.csv --planilha ID` (só alta) e, depois de validar,
+     `--confianca media` e `--gravar` (faz backup em `logs\backup_sugestoes_*.csv`). As linhas viram `conferido_manual`.
+  4. Exportar o CSV novo e rodar o robô (elas entram na fila). Complemento escrito junto com a rua ("COND. X - APTO 5- AV. Y") é
+     separado pelo robô e colocado no campo Complemento.
+- Auditoria do que já foi gravado: `python scripts/auditar_log.py` (lista `perdido` / `presente`); restaurar à mão só os `perdido`.
+- Para cada linha corrigida à mão: preencher `cep_novo` e `status_cep = conferido_manual`; exportar o CSV e rodar o robô (elas entram na fila).
 
 **Fase 4: conferência por amostra**
 - `--conferir-marcados` (só leitura) compara o CEP do Hub com o da planilha. Fazer uma amostra de 300 a 500 (todos levariam ~20 horas). Nos primeiros 533, 524 estavam certos.
