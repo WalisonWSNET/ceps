@@ -1489,7 +1489,7 @@ def executar(args):
             raise SystemExit("--conferir-verdes precisa de --planilha (lê as cores da planilha)")
         args.conferir_marcados = True
         verdes_ids = ids_cep_verde(args.planilha, args.credenciais, args.aba)
-        print(f"{len(verdes_ids)} serviços com cep_novo em verde na planilha")
+        print(f"{len(verdes_ids)} serviços com cep_novo em verde na planilha (a amostra sai só dos de status_cep confiável)")
     if args.conferir_marcados:  # só leitura: confere no Hub os serviços já marcados como feitos (ou verdes)
         ja = carregar_conferidos()
         linhas = [r for r in todas if ((so_digitos(r.get("id_cliente_servico")) in verdes_ids) if args.conferir_verdes
@@ -1498,6 +1498,9 @@ def executar(args):
                   and (not args.id or so_digitos(r["id_cliente_servico"]) in set(map(so_digitos, args.id)))
                   and so_digitos(r["id_cliente_servico"]) not in ja]
         if args.conferir_verdes:
+            # o verde é "cep_novo igual ao CEP atual": nos status não resolvidos isso só quer dizer "nada achado". A pergunta útil é se os
+            # de status confiável (que dizem ter achado o CEP de rua) estão mesmo certos no Hub
+            linhas = [r for r in linhas if (r.get("status_cep") or "").strip() in STATUS_CONFIAVEIS]
             random.shuffle(linhas)
             linhas = linhas[:args.conferir_verdes]
     if args.excluir_multi_servico and not args.conferir_marcados and not args.id:

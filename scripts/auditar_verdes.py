@@ -51,6 +51,19 @@ def main():
     for st, n in por_status.most_common():
         print(f"   {st}: {n}")
 
+    nao_resolvidos = [r for r in sel if (r.get("status_cep") or "").strip() in ("fora_do_escopo", "nao_encontrado", "ambiguo", "numero_fora_da_faixa")]
+    print(f"\nVerdes NÃO resolvidos (cep_novo só repete o CEP atual): {len(nao_resolvidos)}")
+    print(f"  destes, com CEP genérico: {sum(1 for r in nao_resolvidos if hub.so_digitos(r.get('cep_novo')) in GENERICOS)}")
+    sug_arq = Path("logs/sugestoes/sugestoes.csv")
+    if sug_arq.exists():
+        conf = {}
+        with open(sug_arq, encoding="utf-8", newline="") as f:
+            for r in csv.DictReader(f):
+                conf[hub.so_digitos(r["id_cliente_servico"])] = r.get("confianca") or "sem_sugestao"
+        c = Counter(conf.get(hub.so_digitos(r.get("id_cliente_servico")), "(não analisado)") for r in genericos)
+        print("Verdes com CEP genérico x sugestão (logs/sugestoes/sugestoes.csv):")
+        for k, n in c.most_common():
+            print(f"   {k}: {n}")
     Path(args.saida).mkdir(parents=True, exist_ok=True)
     campos = ["id_cliente_servico", "codigo_cliente", "endereco", "numero", "bairro", "cidade", "cep", "cep_novo", "status_cep", "feito"]
     with open(Path(args.saida) / "verdes_genericos.csv", "w", encoding="utf-8", newline="") as f:
