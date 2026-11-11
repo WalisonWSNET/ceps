@@ -210,8 +210,12 @@ def main():
         nviz, ceps_viz = vizinhos(r, idx_viz)
         if nviz >= 2 and len(ceps_viz) == 1:  # os vizinhos já resolvidos, na mesma rua e perto, concordam em UM CEP
             cep_viz = next(iter(ceps_viz))
-            if d.get("cep_proposto") == cep_viz and d.get("confianca") in ("media", "baixa"):
-                d["confianca"], d["motivo"] = "alta", (d.get("motivo") or "") + "+vizinhos_confirmam"
+            motivo_d = d.get("motivo") or ""
+            risco = any(m in motivo_d for m in ("numero_fora_da_faixa", "homonima", "tipo_da_via_difere"))
+            if d.get("cep_proposto") == cep_viz and d.get("confianca") == "media" and not risco and d.get("metodo") in ("exata", "fonetica"):
+                d["confianca"], d["motivo"] = "alta", motivo_d + "+vizinhos_confirmam"
+            elif d.get("cep_proposto") == cep_viz and d.get("confianca") in ("media", "baixa") and "numero_fora_da_faixa" not in motivo_d:
+                d["confianca"], d["motivo"] = "media", motivo_d + "+vizinhos_confirmam"  # os vizinhos ajudam, mas há um risco: só media
             elif not d.get("cep_proposto") or d.get("confianca") == "baixa":
                 d.update(cep_proposto=cep_viz, metodo="vizinhos", confianca="media", motivo=f"vizinhos_mesma_rua({nviz})",
                          bairro_correios="", rua_correios="(CEP dos vizinhos já resolvidos)")
