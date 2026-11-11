@@ -28,6 +28,7 @@ import refinar_ceps_geografia as geo  # noqa: E402
 
 STATUS_ALVO = ("nao_encontrado", "numero_fora_da_faixa", "ambiguo")
 ENFEITES = {"balneario", "praia", "interior"}
+NUM_PALAVRAS = set(base.NUMEROS) | set(base.DEZENAS.values()) | {"cem", "cento", "mil"}
 CAMPOS = ["id_cliente_servico", "codigo_cliente", "endereco", "numero", "bairro", "cidade", "status_atual", "rua_usada",
           "complemento_extraido", "cep_proposto", "rua_correios", "bairro_correios", "distancia_km", "metodo", "confianca",
           "motivo", "alternativas"]
@@ -77,10 +78,13 @@ def candidatos_rua(idx, fon, cidade, nome):
     for pf in difflib.get_close_matches(fk, chaves_f, n=3, cutoff=0.86):
         for key in fon[cidade][pf]:
             add("parecida", key)
-    if len(k) >= 6:
+    numerada = any(t in NUM_PALAVRAS for t in k.split())  # "Treze" não pode virar "Três": rua numerada só casa exata/por som
+    if len(k) >= 6 and not numerada:
         for key in idx.get(cidade, {}):
             if len(key) >= 6 and (k in key or key in k):
                 add("contida", key)
+    if numerada:
+        achados = [(m, key) for m, key in achados if m in ("exata", "fonetica")]
     return achados
 
 
@@ -101,9 +105,13 @@ def avaliar(linha, idx, fon, mapa):
             cabe = base.serve(e, n)
             ctr, _ = mapa.centro(cidade, e["bairro_txt"])
             dist = geo.km(c, ctr) if (c and ctr) else None
-            mesmo_bairro = bairro_igual(linha.get("bairro"), e["bairro_txt"])
+            q = re.search(r"\(([^)]*)", e["txt"].split("; ", 1)[-1])
+            qual = q.group(1) if q else ""  # "Nove (Baln Tonhão)": o que vem entre parênteses diz de qual bairro é esta rua
+            qual_igual = bool(qual) and bairro_igual(linha.get("bairro"), qual)
+            mesmo_bairro = bairro_igual(linha.get("bairro"), e["bairro_txt"]) or qual_igual
+            qual_ok = (not qual) or qual_igual or bairro_igual(linha.get("bairro"), e["bairro_txt"])
             o = dict(cep=e["cep"], rua=key, bairro=e["bairro_txt"], dist=dist, cabe=cabe, mesmo_bairro=mesmo_bairro,
-                     metodo=metodo, txt=e["txt"])
+                     metodo=metodo, txt=e["txt"], qual_ok=qual_ok)
             atual = opcoes.get(e["cep"])
             if atual is None or ordem[metodo] < ordem[atual["metodo"]]:
                 opcoes[e["cep"]] = o
@@ -135,8 +143,11 @@ def avaliar(linha, idx, fon, mapa):
         conf = "media"     # nome parecido, ou só o bairro vizinho, ou a coordenada discorda: validar por amostra
     else:
         conf = "baixa"
+    if not o["qual_ok"]:
+        conf = "baixa"  # a lista tem várias ruas com esse nome e esta é de outro bairro (o qualificador não bate com o cliente)
     motivo = f"rua_{o['metodo']}" + ("+bairro_igual" if o["mesmo_bairro"] else "+bairro_vizinho" if vizinho else "") \
-        + ("" if numero_ok else "+numero_fora_da_faixa") + ("+complemento_separado" if compl else "")
+        + ("" if numero_ok else "+numero_fora_da_faixa") + ("+complemento_separado" if compl else "") \
+        + ("" if o["qual_ok"] else "+rua_homonima_de_outro_bairro")
     return dict(saida, cep_proposto=o["cep"], rua_correios=o["txt"].split("; ", 1)[-1].rstrip(")"), bairro_correios=o["bairro"],
                 distancia_km="" if o["dist"] is None else round(o["dist"], 1), metodo=o["metodo"], confianca=conf, motivo=motivo)
 

@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import atualizar_ceps as base  # noqa: E402
 
-MARCAS = re.compile(r"\b(COND\w*|BLOCO|BL\.?\s?\w|APTO?\.?|AP\.?\s?\d+|CASA\s?\d*|FUNDOS|QUADRA|QD\.?\s?\w+|LOTE|LT\.?\s?\d+|"
+MARCAS = re.compile(r"\b(COND(?:OM[IÍ]NIO)?\b\.?|BLOCO|BL\.?\s?\w|APTO?\.?|AP\.?\s?\d+|CASA\s?\d*|FUNDOS|QUADRA|QD\.?\s?\w+|LOTE|LT\.?\s?\d+|"
                     r"PR[OÓ]X\w*|ESQ\w*|AO LADO|EM FRENTE|SOBRADO|LOJA|SALA)\b", re.I)
 
 
@@ -56,8 +56,8 @@ def main():
         antes, final = det.get("antes") or {}, det.get("final") or {}
         rua = antes.get("Endereço", "")
         extra = texto_extra(rua)
-        if not extra:
-            continue
+        if not extra or norm(extra) in norm(final.get("Endereço", "")):
+            continue  # nada a mais, ou o "texto extra" é parte do nome da rua (Condessa de Vimieiros, Casa Blanca...)
         n_com_extra += 1
         comp, ref = final.get("Complemento", ""), final.get("Referência", "")
         alvo = norm(extra)

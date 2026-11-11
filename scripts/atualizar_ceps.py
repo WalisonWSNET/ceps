@@ -31,10 +31,22 @@ def tokens(s):
     s = sem_acento(s.lower())
     s = re.sub(r"\([^)]*\)", " ", s)
     s = re.sub(r"[^a-z0-9 ]", " ", s)
-    return [NUMEROS[int(t)] if t.isdigit() and int(t) < len(NUMEROS) else t
-            for t in s.split() if t not in IGNORAR]
+    saida = []
+    for t in s.split():
+        if t in IGNORAR:
+            continue
+        if t.isdigit() and int(t) < len(NUMEROS):
+            saida.append(NUMEROS[int(t)])
+        elif t.isdigit() and 21 <= int(t) <= 99 and int(t) % 10:
+            saida += [DEZENAS[int(t) // 10], NUMEROS[int(t) % 10]]  # "28" = "Vinte e Oito" (o "e" é ignorado)
+        elif t.isdigit() and 21 <= int(t) <= 99:
+            saida.append(DEZENAS[int(t) // 10])
+        else:
+            saida.append(t)
+    return saida
 
 
+DEZENAS = {2: "vinte", 3: "trinta", 4: "quarenta", 5: "cinquenta", 6: "sessenta", 7: "setenta", 8: "oitenta", 9: "noventa"}
 NUMEROS = "zero um dois tres quatro cinco seis sete oito nove dez onze doze treze quatorze quinze dezesseis dezessete dezoito dezenove vinte".split()
 ABREV_BAIRRO = {"jd": "jardim", "baln": "balneario", "etn": "estancia", "vl": "vila", "prq": "parque",
                 "pq": "parque", "cid": "cidade", "cpos": "campos", "res": "residencial", "sta": "santa",
