@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 VERDADEIRO = {"TRUE", "VERDADEIRO", "SIM", "1", "X"}
+GENERICOS = {"11700000", "11730000", "11740000", "11750000"}
 NIVEIS = {"alta": ("alta",), "media": ("alta", "media"), "baixa": ("alta", "media", "baixa")}
 
 
@@ -33,6 +34,8 @@ def main():
     ap.add_argument("--aba")
     ap.add_argument("--confianca", choices=list(NIVEIS), default="alta", help="até que nível aplicar (padrão: só alta)")
     ap.add_argument("--ids", nargs="+", help="aplica só estes id_cliente_servico (ignora --confianca)")
+    ap.add_argument("--forcar-cep-de-rua", action="store_true",
+                    help="aplica também onde o cep_novo atual já é de rua (por padrão essas linhas são puladas)")
     ap.add_argument("--gravar", action="store_true")
     args = ap.parse_args()
 
@@ -77,6 +80,8 @@ def main():
             motivo = "ja_marcado_feito"
         elif valor(n, "status_cep").strip() != r["status_atual"]:
             motivo = "status_cep_mudou"
+        elif so_digitos(valor(n, "cep_novo")) not in GENERICOS and not args.forcar_cep_de_rua:
+            motivo = "cep_atual_ja_e_de_rua"  # o Hub já tem um CEP de rua: não troca por um palpite
         if motivo:
             puladas[motivo] = puladas.get(motivo, 0) + 1
             continue

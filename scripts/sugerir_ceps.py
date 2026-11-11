@@ -189,6 +189,8 @@ def main():
     ap.add_argument("csv")
     ap.add_argument("correios", nargs="?", default="data/ceps_logradouros.csv")
     ap.add_argument("--saida", default="logs/sugestoes")
+    ap.add_argument("--incluir-cep-de-rua", action="store_true",
+                    help="analisa também as linhas em que o Hub já tem um CEP de rua (por padrão ficam de fora)")
     args = ap.parse_args()
 
     with open(args.csv, encoding="utf-8-sig", newline="") as f:
@@ -201,11 +203,15 @@ def main():
     mapa = geo.MapaBairros(geo.centros_dos_bairros(linhas))
     idx_viz = indice_vizinhos(linhas)
     saida, cont = [], Counter()
+    ja_tem_cep_de_rua = 0
     for r in linhas:
         st = (r.get("status_cep") or "").strip()
         if st not in STATUS_ALVO or (r.get("feito") or "").strip().upper() in geo.VERDADEIRO:
             continue
         if (r.get("cidade") or "").strip().upper() not in base.CIDADES:
+            continue
+        if not args.incluir_cep_de_rua and so_digitos(r.get("cep")) not in GENERICOS:
+            ja_tem_cep_de_rua += 1  # o Hub já tem um CEP de rua (não genérico): não há o que sugerir, e trocar seria arriscado
             continue
         d = avaliar(dict(r, status_atual=st), idx, fon, mapa)
         nviz, ceps_viz = vizinhos(r, idx_viz)
@@ -241,7 +247,10 @@ def main():
         w = csv.DictWriter(f, CAMPOS)
         w.writeheader()
         w.writerows(saida)
-    print(f"{len(saida)} linhas analisadas -> {caminho}\n")
+    print(f"{len(saida)} linhas analisadas -> {caminho}")
+    if ja_tem_cep_de_rua:
+        print(f"({ja_tem_cep_de_rua} linhas não resolvidas ficaram de fora porque o Hub já tem CEP de rua; use --incluir-cep-de-rua para vê-las)")
+    print()
     for st in STATUS_ALVO:
         partes = ", ".join(f"{c}: {n}" for (s, c), n in sorted(cont.items()) if s == st)
         print(f"  {st}: {partes}")
