@@ -91,7 +91,7 @@ def candidatos_rua(idx, fon, cidade, nome):
 def avaliar(linha, idx, fon, mapa):
     cidade = linha["cidade"].strip().upper()
     rua, compl = base.extrair_complemento(linha["endereco"])
-    _, nome = base.separa_tipo(rua)
+    tipo_cli, nome = base.separa_tipo(rua)
     n = base.numero(linha.get("numero"))
     c = geo.coordenada(linha.get("coordenadas"))
     ruas = candidatos_rua(idx, fon, cidade, nome)
@@ -110,8 +110,9 @@ def avaliar(linha, idx, fon, mapa):
             qual_igual = bool(qual) and bairro_igual(linha.get("bairro"), qual)
             mesmo_bairro = bairro_igual(linha.get("bairro"), e["bairro_txt"]) or qual_igual
             qual_ok = (not qual) or qual_igual or bairro_igual(linha.get("bairro"), e["bairro_txt"])
+            tipo_difere = bool(tipo_cli and e.get("tipo") and tipo_cli != e["tipo"])  # Av. Sorocabana x Rua Sorocabana
             o = dict(cep=e["cep"], rua=key, bairro=e["bairro_txt"], dist=dist, cabe=cabe, mesmo_bairro=mesmo_bairro,
-                     metodo=metodo, txt=e["txt"], qual_ok=qual_ok)
+                     metodo=metodo, txt=e["txt"], qual_ok=qual_ok, tipo_difere=tipo_difere)
             atual = opcoes.get(e["cep"])
             if atual is None or ordem[metodo] < ordem[atual["metodo"]]:
                 opcoes[e["cep"]] = o
@@ -145,9 +146,11 @@ def avaliar(linha, idx, fon, mapa):
         conf = "baixa"
     if not o["qual_ok"]:
         conf = "baixa"  # a lista tem várias ruas com esse nome e esta é de outro bairro (o qualificador não bate com o cliente)
+    elif o["tipo_difere"] and conf == "alta":
+        conf = "media"  # o tipo da via (rua/avenida/travessa) do cadastro não é o da lista: conferir no Hub
     motivo = f"rua_{o['metodo']}" + ("+bairro_igual" if o["mesmo_bairro"] else "+bairro_vizinho" if vizinho else "") \
         + ("" if numero_ok else "+numero_fora_da_faixa") + ("+complemento_separado" if compl else "") \
-        + ("" if o["qual_ok"] else "+rua_homonima_de_outro_bairro")
+        + ("" if o["qual_ok"] else "+rua_homonima_de_outro_bairro") + ("+tipo_da_via_difere" if o["tipo_difere"] else "")
     return dict(saida, cep_proposto=o["cep"], rua_correios=o["txt"].split("; ", 1)[-1].rstrip(")"), bairro_correios=o["bairro"],
                 distancia_km="" if o["dist"] is None else round(o["dist"], 1), metodo=o["metodo"], confianca=conf, motivo=motivo)
 
