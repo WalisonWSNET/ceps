@@ -31,7 +31,11 @@ ENFEITES = {"balneario", "praia", "interior"}
 NUM_PALAVRAS = set(base.NUMEROS) | set(base.DEZENAS.values()) | {"cem", "cento", "mil"}
 CAMPOS = ["id_cliente_servico", "codigo_cliente", "endereco", "numero", "bairro", "cidade", "status_atual", "rua_usada",
           "complemento_extraido", "cep_proposto", "rua_correios", "bairro_correios", "distancia_km", "metodo", "confianca",
-          "motivo", "alternativas"]
+          "motivo", "vizinhos_n", "vizinhos_cep", "alternativas"]
+CONFIAVEIS_VIZ = {"exato", "exato_por_bairro", "exato_por_numero", "exato_por_faixa", "exato_por_coordenada", "aprox_exato",
+                  "aprox_exato_por_numero", "aprox_exato_por_bairro", "exato_por_geografia", "conferido_manual"}
+GENERICOS = {"11700000", "11730000", "11740000", "11750000"}
+RAIO_VIZ_KM = 0.25
 
 
 def so_digitos(s):
@@ -86,6 +90,30 @@ def candidatos_rua(idx, fon, cidade, nome):
     if numerada:
         achados = [(m, key) for m, key in achados if m in ("exata", "fonetica")]
     return achados
+
+
+def indice_vizinhos(linhas):
+    """(cidade, rua por som) -> [(coordenada, cep)] dos serviços JÁ resolvidos (status confiável, CEP de rua)."""
+    res = defaultdict(list)
+    for r in linhas:
+        cep = so_digitos(r.get("cep_novo"))
+        if (r.get("status_cep") or "").strip() in CONFIAVEIS_VIZ and len(cep) == 8 and cep not in GENERICOS:
+            c = geo.coordenada(r.get("coordenadas"))
+            if c:
+                rua, _ = base.extrair_complemento(r.get("endereco", ""))
+                res[((r.get("cidade") or "").strip().upper(), base.fonetica(base.chave(base.separa_tipo(rua)[1])))].append((c, cep))
+    return res
+
+
+def vizinhos(linha, idx_viz):
+    """CEPs dos clientes já resolvidos na MESMA rua e a até RAIO_VIZ_KM do cliente. Devolve (n, {cep: n})."""
+    c = geo.coordenada(linha.get("coordenadas"))
+    if not c:
+        return 0, Counter()
+    rua, _ = base.extrair_complemento(linha.get("endereco", ""))
+    chave = ((linha.get("cidade") or "").strip().upper(), base.fonetica(base.chave(base.separa_tipo(rua)[1])))
+    perto = [cep for (cc, cep) in idx_viz.get(chave, []) if geo.km(c, cc) <= RAIO_VIZ_KM]
+    return len(perto), Counter(perto)
 
 
 def avaliar(linha, idx, fon, mapa):
@@ -170,6 +198,7 @@ def main():
     idx = base.carrega_ref(args.correios)
     fon = montar_indices(idx)
     mapa = geo.MapaBairros(geo.centros_dos_bairros(linhas))
+    idx_viz = indice_vizinhos(linhas)
     saida, cont = [], Counter()
     for r in linhas:
         st = (r.get("status_cep") or "").strip()
@@ -178,11 +207,25 @@ def main():
         if (r.get("cidade") or "").strip().upper() not in base.CIDADES:
             continue
         d = avaliar(dict(r, status_atual=st), idx, fon, mapa)
+        nviz, ceps_viz = vizinhos(r, idx_viz)
+        if nviz >= 2 and len(ceps_viz) == 1:  # os vizinhos já resolvidos, na mesma rua e perto, concordam em UM CEP
+            cep_viz = next(iter(ceps_viz))
+            if d.get("cep_proposto") == cep_viz and d.get("confianca") in ("media", "baixa"):
+                d["confianca"], d["motivo"] = "alta", (d.get("motivo") or "") + "+vizinhos_confirmam"
+            elif not d.get("cep_proposto") or d.get("confianca") == "baixa":
+                d.update(cep_proposto=cep_viz, metodo="vizinhos", confianca="media", motivo=f"vizinhos_mesma_rua({nviz})",
+                         bairro_correios="", rua_correios="(CEP dos vizinhos já resolvidos)")
+            elif d.get("cep_proposto") != cep_viz:
+                d["confianca"], d["motivo"] = "baixa", (d.get("motivo") or "") + "+vizinhos_discordam"
+        elif nviz >= 2 and d.get("cep_proposto") and d["cep_proposto"] not in ceps_viz:
+            d["confianca"], d["motivo"] = "baixa", (d.get("motivo") or "") + "+vizinhos_divergem_entre_si"
         row = {k: "" for k in CAMPOS}
         row.update(id_cliente_servico=so_digitos(r.get("id_cliente_servico")), codigo_cliente=r.get("codigo_cliente", ""),
                    endereco=r.get("endereco", ""), numero=r.get("numero", ""), bairro=r.get("bairro", ""),
                    cidade=r.get("cidade", ""), status_atual=st)
         row.update({k: v for k, v in d.items() if k in CAMPOS})
+        row["vizinhos_n"] = nviz or ""
+        row["vizinhos_cep"] = " | ".join(f"{c} ({n})" for c, n in ceps_viz.most_common(3))
         saida.append(row)
         cont[(st, row["confianca"] or "sem_sugestao")] += 1
     Path(args.saida).mkdir(parents=True, exist_ok=True)
