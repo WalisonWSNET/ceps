@@ -228,6 +228,9 @@ def main():
     ap.add_argument("--saida", default="logs/sugestoes")
     ap.add_argument("--incluir-cep-de-rua", action="store_true",
                     help="analisa também as linhas em que o Hub já tem um CEP de rua (por padrão ficam de fora)")
+    ap.add_argument("--conflitos", action="store_true",
+                    help="só os serviços em que o Hub tem um CEP de rua da MESMA rua mas de outro trecho: o CEP atual NÃO serve o número "
+                         "e o proposto serve (ex.: nº 274 com o CEP de 'de 131 a 259 lado ímpar')")
     args = ap.parse_args()
 
     with open(args.csv, encoding="utf-8-sig", newline="") as f:
@@ -252,7 +255,11 @@ def main():
             continue
         if (r.get("cidade") or "").strip().upper() not in base.CIDADES:
             continue
-        if not args.incluir_cep_de_rua and so_digitos(r.get("cep")) not in GENERICOS:
+        cep_atual = so_digitos(r.get("cep"))
+        if args.conflitos:
+            if cep_atual in GENERICOS or len(cep_atual) != 8:
+                continue
+        elif not args.incluir_cep_de_rua and cep_atual not in GENERICOS:
             ja_tem_cep_de_rua += 1  # o Hub já tem um CEP de rua (não genérico): não há o que sugerir, e trocar seria arriscado
             continue
         d = avaliar(dict(r, status_atual=st), idx, fon, mapa)
@@ -286,6 +293,15 @@ def main():
         row.update({k: v for k, v in d.items() if k in CAMPOS})
         row["vizinhos_n"] = nviz or ""
         row["vizinhos_cep"] = " | ".join(f"{c} ({n})" for c, n in ceps_viz.most_common(3))
+        if args.conflitos:
+            prop, n_cli = row["cep_proposto"], base.numero(r.get("numero"))
+            if not prop or prop == cep_atual or row["confianca"] not in ("alta", "media"):
+                continue
+            if not ({e["k"] for e in por_cep.get(cep_atual, [])} & {e["k"] for e in por_cep.get(prop, [])}):
+                continue  # o CEP do Hub é de OUTRA rua (pode ser o nome oficial de uma rua projetada): não mexer
+            if any(base.serve(e, n_cli) for e in por_cep.get(cep_atual, [])) or not any(base.serve(e, n_cli) for e in por_cep.get(prop, [])):
+                continue
+            row["confianca"], row["motivo"] = "media", "cep_do_hub_nao_serve_o_numero+" + (row["motivo"] or "")
         saida.append(row)
         cont[(st, row["confianca"] or "sem_sugestao")] += 1
     Path(args.saida).mkdir(parents=True, exist_ok=True)
