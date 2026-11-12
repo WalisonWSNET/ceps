@@ -66,6 +66,8 @@ def main():
     ap.add_argument("--listar-com-cep", metavar="CSV", help="lista (e grava em logs/ruas_encerradas_com_cep.csv) os serviços dessas ruas que JÁ têm CEP de rua, "
                     "com a rua e o bairro a que esse CEP pertence na lista dos Correios")
     ap.add_argument("--correios", default="data/ceps_logradouros.csv")
+    ap.add_argument("--incluir-com-cep", action="store_true",
+                    help="marca também os serviços dessas ruas que já têm CEP de rua (o CEP do Hub é mantido; a nota diz isso)")
     args = ap.parse_args()
     ruas = carregar_ruas(args.ruas)
 
@@ -108,7 +110,7 @@ def main():
                 continue
             if (r.get("status_cep") or "").strip() not in STATUS_ALVO:
                 fora["status_diferente"] += 1
-            elif so_digitos(r.get("cep_novo")) not in GENERICOS:
+            elif so_digitos(r.get("cep_novo")) not in GENERICOS and not args.incluir_com_cep:
                 fora["ja_tem_cep_de_rua"] += 1
             else:
                 cont[(r.get("cidade") or "")[:4].upper() + " " + " ".join(sorted(nome_da_rua(r.get("endereco"))))] += 1
@@ -147,14 +149,15 @@ def main():
         if valor(r, "status_cep").strip() not in STATUS_ALVO:
             fora["status_diferente"] += 1
             continue
-        if so_digitos(valor(r, "cep_novo")) not in GENERICOS:
+        tem_cep_de_rua = so_digitos(valor(r, "cep_novo")) not in GENERICOS
+        if tem_cep_de_rua and not args.incluir_com_cep:
             fora["ja_tem_cep_de_rua"] += 1
             continue
         n_ok += 1
         celulas = {"feito": True}
         if "obs_robo" in col:
             antigo = valor(r, "obs_robo").strip()
-            nota = f"rua_encerrada: {m}"
+            nota = f"rua_encerrada: {m}" + ("; mantido o CEP que o Hub já tinha (de outra rua, não confirmado)" if tem_cep_de_rua else "")
             celulas["obs_robo"] = (antigo + " | " + nota if antigo else nota)[:300]
         for nome, novo in celulas.items():
             backup.append((so_digitos(valor(r, "id_cliente_servico")), nome, valor(r, nome), novo))
