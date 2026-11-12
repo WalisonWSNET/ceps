@@ -200,7 +200,7 @@ def avaliar(linha, idx, fon, mapa):
         conf = "media"  # a coordenada aponta outro bairro: confirmar no Hub antes de aplicar
     elif numero_ok and o["metodo"] in ("exata", "fonetica") and o["mesmo_bairro"] and coord_ok:
         conf = "alta"      # a única que sai direto: rua igual (ou igual por som) E bairro igual E número na faixa
-    elif numero_ok and o["metodo"] in ("exata", "fonetica") and len({x["cep"] for x in servem}) == 1 and o["dist"] is None:
+    elif numero_ok and o["metodo"] in ("exata", "fonetica", "parecida") and len({x["cep"] for x in servem}) == 1 and o["dist"] is None:
         conf = "media"     # a lista não diz o bairro deste CEP (linha colada no PDF), mas só ESTE CEP serve a rua e o número
     elif numero_ok and (o["mesmo_bairro"] or vizinho) and not (o["dist"] is not None and o["dist"] > 3):
         conf = "media"     # nome parecido, ou só o bairro vizinho: validar por amostra
