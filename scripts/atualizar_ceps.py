@@ -155,6 +155,8 @@ def fonetica(s):
     s = re.sub(r"[^a-z0-9 ]", " ", sem_acento(s.lower().replace("ç", "s")))
     out = []
     for t in s.split():
+        if len(t) > 5 and t.endswith("oes"):
+            t = t[:-3] + "ao"  # plural em -ões = singular em -ão ("Camarões" = "Camarão")
         t = t.replace("ph", "f").replace("th", "t").replace("sh", "x").replace("ch", "x")
         t = t.replace("qu", "s").replace("ck", "s")
         t = t.translate(str.maketrans({"c": "s", "k": "s", "q": "s", "z": "s", "y": "i", "w": "v", "h": ""}))
