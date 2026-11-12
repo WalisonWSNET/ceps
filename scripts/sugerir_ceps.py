@@ -99,11 +99,15 @@ def candidatos_rua(idx, fon, cidade, nome):
                 add("parecida", key)
     numerada = any(t in NUM_PALAVRAS for t in k.split())  # "Treze" não pode virar "Três": rua numerada só casa exata/por som
     if len(k) >= 6 and not numerada:
+        tk = set(k.split())  # a chave tem as palavras em ordem alfabética: compara por CONJUNTO de palavras, não por texto
         for key in idx.get(cidade, {}):
-            curta = min(k, key, key=len)
-            # "Santos" contido em "José Firmino dos Santos" não é a mesma rua: o lado curto precisa ter 2+ palavras ou 8+ letras
-            if len(key) >= 6 and (k in key or key in k) and (len(curta.split()) >= 2 or len(curta) >= 8):
-                add("contida", key)
+            tl = set(key.split())
+            if len(key) < 6 or tk == tl:
+                continue
+            if tl < tk and len(tl) >= 2:
+                add("contida_maior", key)  # o cadastro tem a rua da lista + palavras a mais (ex.: "Walter Apelian Barbosa" x "Walter Apelian")
+            elif tk < tl and (len(tk) >= 2 or len(k) >= 8):
+                add("contida", key)  # o cadastro tem só PARTE do nome da lista ("Av. Francisco"): nunca passa de baixa
     if numerada:
         achados = [(m, key) for m, key in achados if m in ("exata", "fonetica")]
     return achados
@@ -143,7 +147,7 @@ def avaliar(linha, idx, fon, mapa):
     saida = dict(rua_usada=rua, complemento_extraido=compl)
     if not ruas:
         return dict(saida, confianca="", motivo="sem_rua_parecida_na_lista")
-    ordem = {"exata": 0, "fonetica": 1, "parecida": 2, "contida": 3}
+    ordem = {"exata": 0, "fonetica": 1, "parecida": 2, "contida_maior": 3, "contida": 4}
     opcoes = {}  # cep -> dict
     for metodo, key in ruas:
         for e in idx[cidade][key]:
@@ -202,6 +206,8 @@ def avaliar(linha, idx, fon, mapa):
         conf = "media"     # nome parecido, ou só o bairro vizinho: validar por amostra
     else:
         conf = "baixa"
+    if o["metodo"] == "contida_maior" and not o["mesmo_bairro"]:
+        conf = "baixa"  # nome do cadastro com palavras a mais: só é média se o bairro for o MESMO da lista
     if o["metodo"] == "contida":
         conf = "baixa"  # nome PARCIAL (ex.: "Av. Francisco" x "Francisco Antônio Mendes Caruso"): só vira média se os vizinhos confirmarem
     if not o["qual_ok"]:
