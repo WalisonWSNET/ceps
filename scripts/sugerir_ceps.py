@@ -97,6 +97,11 @@ def candidatos_rua(idx, fon, cidade, nome):
         for key in fon[cidade][pf]:
             if palavras_compativeis(base.fonetica(k), base.fonetica(key)):
                 add("parecida", key)
+    if " " not in fk and len(fk) >= 6:  # uma palavra, igual exceto a vogal final ("Iguaçu" x "Iguaçá"): candidata, sempre baixa
+        for pf in chaves_f:
+            if " " not in pf and len(pf) == len(fk) and pf[:-1] == fk[:-1] and pf[-1] != fk[-1] and pf[-1] in "aeiou" and fk[-1] in "aeiou":
+                for key in fon[cidade][pf]:
+                    add("vogal_final", key)
     numerada = any(t in NUM_PALAVRAS for t in k.split())  # "Treze" não pode virar "Três": rua numerada só casa exata/por som
     if len(k) >= 6 and not numerada:
         tk = set(k.split())  # a chave tem as palavras em ordem alfabética: compara por CONJUNTO de palavras, não por texto
@@ -141,13 +146,16 @@ def avaliar(linha, idx, fon, mapa):
     cidade = linha["cidade"].strip().upper()
     rua, compl = base.extrair_complemento(linha["endereco"])
     tipo_cli, nome = base.separa_tipo(rua)
+    t2, nome2 = base.separa_tipo(nome)
+    if t2 and nome2.strip():  # "Rua Alameda Aclimação": o 2º tipo é o certo e o nome é o que vem depois
+        tipo_cli, nome = t2, nome2
     n = base.numero(linha.get("numero"))
     c = geo.coordenada(linha.get("coordenadas"))
     ruas = candidatos_rua(idx, fon, cidade, nome)
     saida = dict(rua_usada=rua, complemento_extraido=compl)
     if not ruas:
         return dict(saida, confianca="", motivo="sem_rua_parecida_na_lista")
-    ordem = {"exata": 0, "fonetica": 1, "parecida": 2, "contida_maior": 3, "contida": 4}
+    ordem = {"exata": 0, "fonetica": 1, "parecida": 2, "contida_maior": 3, "contida": 4, "vogal_final": 5}
     opcoes = {}  # cep -> dict
     for metodo, key in ruas:
         for e in idx[cidade][key]:
@@ -208,7 +216,7 @@ def avaliar(linha, idx, fon, mapa):
         conf = "baixa"
     if o["metodo"] == "contida_maior" and not o["mesmo_bairro"]:
         conf = "baixa"  # nome do cadastro com palavras a mais: só é média se o bairro for o MESMO da lista
-    if o["metodo"] == "contida":
+    if o["metodo"] in ("contida", "vogal_final"):
         conf = "baixa"  # nome PARCIAL (ex.: "Av. Francisco" x "Francisco Antônio Mendes Caruso"): só vira média se os vizinhos confirmarem
     if not o["qual_ok"]:
         conf = "baixa"  # a lista tem várias ruas com esse nome e esta é de outro bairro (o qualificador não bate com o cliente)
