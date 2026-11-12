@@ -116,6 +116,15 @@ def candidatos_rua(idx, fon, cidade, nome):
                 for key in fon[cidade][pf]:
                     add("vogal_final", key)
     numerada = any(t in NUM_PALAVRAS for t in k.split())  # "Treze" não pode virar "Três": rua numerada só casa exata/por som
+    iniciais = {t for t in k.split() if len(t) == 1 and t.isalpha()}  # "Paulo C. Charif": a inicial "c" = Cesar
+    if iniciais and not numerada:
+        base_k = set(k.split()) - iniciais
+        if len(base_k) >= 2:
+            for key in idx.get(cidade, {}):
+                tl = set(key.split())
+                extra = tl - base_k
+                if base_k < tl and all(any(t.startswith(i) for t in extra) for i in iniciais) and len(extra) <= len(iniciais) + 1:
+                    add("inicial", key)
     if len(k) >= 6 and not numerada:
         tk = set(k.split())  # a chave tem as palavras em ordem alfabética: compara por CONJUNTO de palavras, não por texto
         for key in idx.get(cidade, {}):
@@ -169,7 +178,7 @@ def avaliar(linha, idx, fon, mapa):
     saida = dict(rua_usada=rua, complemento_extraido=compl)
     if not ruas:
         return dict(saida, confianca="", motivo="sem_rua_parecida_na_lista")
-    ordem = {"exata": 0, "fonetica": 1, "parecida": 2, "contida_maior": 3, "contida": 4, "vogal_final": 5}
+    ordem = {"exata": 0, "fonetica": 1, "parecida": 2, "contida_maior": 3, "contida": 4, "vogal_final": 5, "inicial": 2}
     opcoes = {}  # cep -> dict
     for metodo, key in ruas:
         for e in idx[cidade][key]:

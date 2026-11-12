@@ -13,7 +13,7 @@ CIDADES = {"ITANHAÉM", "MONGAGUÁ", "PERUÍBE"}
 TIPOS = {
     "r": "rua", "rua": "rua", "av": "av", "avenida": "av", "al": "al", "alameda": "al",
     "tv": "tv", "trav": "tv", "travessa": "tv", "pc": "pc", "pca": "pc", "praca": "pc",
-    "est": "est", "estrada": "est", "rod": "rod", "rodovia": "rod", "vla": "vla",
+    "est": "est", "estr": "est", "estrada": "est", "rod": "rod", "rodovia": "rod", "vla": "vla",
     "viela": "vla", "lad": "lad", "ladeira": "lad", "trv": "tv", "via": "via",
 }
 IGNORAR = {"de", "da", "do", "das", "dos", "e", "doutor", "dr", "dra", "padre", "pe", "prof",
