@@ -94,9 +94,28 @@ def faixa(nome):
     return base[0], lo, hi, par
 
 
+EMBUTIDO = re.compile(r"(?:\s-\s)?(?:\b(r|av|al|tv|trv|pç|pca|est|vla|rod|lad|via)\s+)?(\d{5})-(\d{3})\s+", re.I)
+
+
+def expandir_linhas(linhas):
+    """A extração dos PDFs às vezes colou a linha seguinte dentro do logradouro ('... - de 2400/2401 ao fim - av 11742-556 José de Barros
+    Saraiva - de 700/701 a 2398/2399 11754-212 José de Oliveira'). Separa em uma linha por CEP (as embutidas ficam sem bairro)."""
+    for r in linhas:
+        log = r["logradouro"]
+        marcas = list(EMBUTIDO.finditer(log))
+        if not marcas:
+            yield r
+            continue
+        yield dict(r, logradouro=log[:marcas[0].start()].strip(" -"))
+        for i, m in enumerate(marcas):
+            fim = marcas[i + 1].start() if i + 1 < len(marcas) else len(log)
+            yield dict(r, cep=m.group(2) + m.group(3), tipo=(m.group(1) or r["tipo"]), bairro="",
+                       logradouro=log[m.end():fim].strip(" -"))
+
+
 def carrega_ref(path):
     ref = defaultdict(list)
-    for r in csv.DictReader(open(path, encoding="utf-8")):
+    for r in expandir_linhas(csv.DictReader(open(path, encoding="utf-8"))):
         nome, lo, hi, par = faixa(r["logradouro"])
         tipo = TIPOS.get(sem_acento(r["tipo"].lower()).replace(".", "").split(" ")[0])
         ref[r["cidade"].upper()].append(

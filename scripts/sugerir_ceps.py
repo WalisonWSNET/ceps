@@ -100,7 +100,9 @@ def candidatos_rua(idx, fon, cidade, nome):
     numerada = any(t in NUM_PALAVRAS for t in k.split())  # "Treze" não pode virar "Três": rua numerada só casa exata/por som
     if len(k) >= 6 and not numerada:
         for key in idx.get(cidade, {}):
-            if len(key) >= 6 and (k in key or key in k):
+            curta = min(k, key, key=len)
+            # "Santos" contido em "José Firmino dos Santos" não é a mesma rua: o lado curto precisa ter 2+ palavras ou 8+ letras
+            if len(key) >= 6 and (k in key or key in k) and (len(curta.split()) >= 2 or len(curta) >= 8):
                 add("contida", key)
     if numerada:
         achados = [(m, key) for m, key in achados if m in ("exata", "fonetica")]
@@ -164,7 +166,7 @@ def avaliar(linha, idx, fon, mapa):
                      f"{'número cabe' if o['cabe'] else 'número fora'})" for o in sorted(todas, key=lambda x: (x["dist"] is None, x["dist"] or 0))[:6])
     saida["alternativas"] = alt
     servem = [o for o in todas if o["cabe"]]
-    if linha["status_atual"] == "numero_fora_da_faixa" or not servem:
+    if not servem:  # (a lista foi corrigida: um número antes "fora da faixa" pode agora caber numa linha que estava colada no PDF)
         servem = todas  # número fora de qualquer faixa: só consulta (baixa)
         numero_ok = False
     else:
@@ -194,6 +196,8 @@ def avaliar(linha, idx, fon, mapa):
         conf = "media"  # a coordenada aponta outro bairro: confirmar no Hub antes de aplicar
     elif numero_ok and o["metodo"] in ("exata", "fonetica") and o["mesmo_bairro"] and coord_ok:
         conf = "alta"      # a única que sai direto: rua igual (ou igual por som) E bairro igual E número na faixa
+    elif numero_ok and o["metodo"] in ("exata", "fonetica") and len({x["cep"] for x in servem}) == 1 and o["dist"] is None:
+        conf = "media"     # a lista não diz o bairro deste CEP (linha colada no PDF), mas só ESTE CEP serve a rua e o número
     elif numero_ok and (o["mesmo_bairro"] or vizinho) and not (o["dist"] is not None and o["dist"] > 3):
         conf = "media"     # nome parecido, ou só o bairro vizinho: validar por amostra
     else:
