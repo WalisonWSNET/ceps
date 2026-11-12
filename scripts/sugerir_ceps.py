@@ -231,6 +231,11 @@ def main():
     fon = montar_indices(idx)
     mapa = geo.MapaBairros(geo.centros_dos_bairros(linhas))
     idx_viz = indice_vizinhos(linhas)
+    por_cep = defaultdict(list)
+    for _cid in idx.values():
+        for _es in _cid.values():
+            for _e in _es:
+                por_cep[_e["cep"]].append(_e)
     saida, cont = [], Counter()
     ja_tem_cep_de_rua = 0
     for r in linhas:
@@ -258,7 +263,12 @@ def main():
                 d.update(cep_proposto=cep_viz, metodo="vizinhos", confianca="media", motivo=f"vizinhos_mesma_rua({nviz})",
                          bairro_correios="", rua_correios="(CEP dos vizinhos já resolvidos)")
             elif d.get("cep_proposto") != cep_viz:
-                d["confianca"], d["motivo"] = "baixa", (d.get("motivo") or "") + "+vizinhos_discordam"
+                n_cli = base.numero(r.get("numero"))
+                viz_serve = any(base.serve(e, n_cli) for e in por_cep.get(cep_viz, []))
+                if not viz_serve:
+                    pass  # o CEP dos vizinhos NÃO serve este número (fim de uma faixa): a lista, e não os vizinhos, decide
+                else:
+                    d["confianca"], d["motivo"] = "baixa", (d.get("motivo") or "") + "+vizinhos_discordam"
         elif nviz >= 2 and d.get("cep_proposto") and d["cep_proposto"] not in ceps_viz:
             d["confianca"], d["motivo"] = "baixa", (d.get("motivo") or "") + "+vizinhos_divergem_entre_si"
         row = {k: "" for k in CAMPOS}
