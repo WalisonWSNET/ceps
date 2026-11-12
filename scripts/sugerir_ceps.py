@@ -77,6 +77,19 @@ def palavras_compativeis(a, b, minimo=0.8):
     return cobre(ta, tb) and cobre(tb, ta)
 
 
+def carregar_apelidos(caminho=Path(__file__).resolve().parent.parent / "data" / "apelidos_ruas.csv"):
+    """(cidade, chave do nome no cadastro) -> nome que a lista dos Correios usa para a mesma rua (confirmado por outra fonte)."""
+    ap = {}
+    if caminho.exists():
+        with open(caminho, encoding="utf-8", newline="") as f:
+            for r in csv.DictReader(f):
+                ap[(r["cidade"].strip().upper(), base.chave(r["nome_cliente"]))] = r["nome_lista"]
+    return ap
+
+
+APELIDOS = carregar_apelidos()
+
+
 def candidatos_rua(idx, fon, cidade, nome):
     """[(metodo, chave_lista)] das ruas da lista que podem ser esta rua."""
     k = base.chave(nome)
@@ -149,6 +162,7 @@ def avaliar(linha, idx, fon, mapa):
     t2, nome2 = base.separa_tipo(nome)
     if t2 and nome2.strip():  # "Rua Alameda Aclimação": o 2º tipo é o certo e o nome é o que vem depois
         tipo_cli, nome = t2, nome2
+    nome = APELIDOS.get((cidade, base.chave(nome)), nome)  # nome diferente do da lista, confirmado por outra fonte (data/apelidos_ruas.csv)
     n = base.numero(linha.get("numero"))
     c = geo.coordenada(linha.get("coordenadas"))
     ruas = candidatos_rua(idx, fon, cidade, nome)
