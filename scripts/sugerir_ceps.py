@@ -202,6 +202,8 @@ def avaliar(linha, idx, fon, mapa):
         conf = "media"     # nome parecido, ou só o bairro vizinho: validar por amostra
     else:
         conf = "baixa"
+    if o["metodo"] == "contida":
+        conf = "baixa"  # nome PARCIAL (ex.: "Av. Francisco" x "Francisco Antônio Mendes Caruso"): só vira média se os vizinhos confirmarem
     if not o["qual_ok"]:
         conf = "baixa"  # a lista tem várias ruas com esse nome e esta é de outro bairro (o qualificador não bate com o cliente)
     elif o["tipo_difere"] and conf == "alta":
