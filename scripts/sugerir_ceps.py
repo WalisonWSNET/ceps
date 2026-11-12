@@ -90,6 +90,10 @@ def carregar_apelidos(caminho=Path(__file__).resolve().parent.parent / "data" / 
 APELIDOS = carregar_apelidos()
 
 
+def numerada_pre(k):
+    return any(t in NUM_PALAVRAS for t in k.split())
+
+
 def candidatos_rua(idx, fon, cidade, nome):
     """[(metodo, chave_lista)] das ruas da lista que podem ser esta rua."""
     k = base.chave(nome)
@@ -109,6 +113,13 @@ def candidatos_rua(idx, fon, cidade, nome):
     for pf in difflib.get_close_matches(fk, chaves_f, n=3, cutoff=0.86):
         for key in fon[cidade][pf]:
             if palavras_compativeis(base.fonetica(k), base.fonetica(key)):
+                add("parecida", key)
+    if not numerada_pre(k):
+        tk0 = set(k.split())
+        for key in idx.get(cidade, {}):  # "Dom Pedro I" na lista x "Dom Pedro" no cadastro: letra solta (numeral romano) no fim do nome
+            tl0 = set(key.split())
+            sem1 = {t for t in tl0 if len(t) > 1}
+            if sem1 != tl0 and sem1 == tk0 and len(k) >= 5:
                 add("parecida", key)
     if " " not in fk and len(fk) >= 6:  # uma palavra, igual exceto a vogal final ("Iguaçu" x "Iguaçá"): candidata, sempre baixa
         for pf in chaves_f:
