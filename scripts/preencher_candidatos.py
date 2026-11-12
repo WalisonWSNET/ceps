@@ -23,12 +23,17 @@ def so_digitos(s):
 
 
 def texto_candidatos(r):
-    itens = []
+    """CEP proposto primeiro, depois as alternativas, cada CEP uma só vez (a numeração 1, 2, 3 da coluna `escolha` segue essa ordem)."""
+    itens, vistos = [], set()
     if r.get("cep_proposto"):
+        vistos.add(r["cep_proposto"])
         itens.append(f"{r['cep_proposto']} ({r.get('bairro_correios') or '?'}; {r.get('rua_correios') or ''}"
                      + (f"; {r['distancia_km']} km" if r.get("distancia_km") else "") + ")")
-    if r.get("alternativas"):
-        itens.append(r["alternativas"])
+    for alt in (r.get("alternativas") or "").split(" | "):
+        cep = so_digitos(alt[:9])
+        if len(cep) == 8 and cep not in vistos:
+            vistos.add(cep)
+            itens.append(alt.strip())
     return " | ".join(itens)
 
 
