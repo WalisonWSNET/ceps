@@ -63,8 +63,40 @@ def main():
     ap.add_argument("--credenciais", default="credenciais_google.json")
     ap.add_argument("--aba")
     ap.add_argument("--gravar", action="store_true")
+    ap.add_argument("--listar-com-cep", metavar="CSV", help="lista (e grava em logs/ruas_encerradas_com_cep.csv) os serviços dessas ruas que JÁ têm CEP de rua, "
+                    "com a rua e o bairro a que esse CEP pertence na lista dos Correios")
+    ap.add_argument("--correios", default="data/ceps_logradouros.csv")
     args = ap.parse_args()
     ruas = carregar_ruas(args.ruas)
+
+    if args.listar_com_cep:
+        idx = base.carrega_ref(args.correios)
+        por_cep = {}
+        for d in idx.values():
+            for es in d.values():
+                for e in es:
+                    por_cep.setdefault(e["cep"], []).append(e)
+        with open(args.listar_com_cep, encoding="utf-8-sig", newline="") as f:
+            linhas = list(csv.DictReader(f))
+        saida = []
+        for r in linhas:
+            if not motivo_da_rua(ruas, r.get("cidade"), r.get("endereco")) or (r.get("feito") or "").strip().upper() in VERDADEIRO:
+                continue
+            cep = so_digitos(r.get("cep_novo"))
+            if (r.get("status_cep") or "").strip() in STATUS_ALVO and cep not in GENERICOS and len(cep) == 8:
+                es = por_cep.get(cep, [])
+                dono = " | ".join(dict.fromkeys(f"{e['txt'].split('; ', 1)[-1].rstrip(')')} [{e['bairro_txt']}]" for e in es)) or "(CEP não está na lista)"
+                saida.append(dict(codigo_cliente=r.get("codigo_cliente"), id_cliente_servico=r.get("id_cliente_servico"), endereco=r.get("endereco"),
+                                  numero=r.get("numero"), bairro=r.get("bairro"), cidade=r.get("cidade"), cep_no_hub=cep, rua_desse_cep_na_lista=dono))
+        Path("logs").mkdir(exist_ok=True)
+        with open("logs/ruas_encerradas_com_cep.csv", "w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, list(saida[0].keys()) if saida else ["codigo_cliente"])
+            w.writeheader()
+            w.writerows(saida)
+        for a in saida:
+            print(f"{a['codigo_cliente']:>6} | {a['endereco'][:34]:34} {a['numero']:>5} | {a['bairro'][:16]:16} | {a['cep_no_hub']} = {a['rua_desse_cep_na_lista'][:70]}")
+        print(f"\n{len(saida)} serviços | arquivo: logs/ruas_encerradas_com_cep.csv")
+        return
 
     if args.csv:
         with open(args.csv, encoding="utf-8-sig", newline="") as f:
