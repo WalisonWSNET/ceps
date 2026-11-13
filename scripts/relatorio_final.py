@@ -5,9 +5,8 @@ Mostra: total da planilha; serviços de outras cidades (fora do escopo); serviç
 certos, quantos ficam com o CEP genérico e quantos ainda estão pendentes. A coluna `cep` da planilha é o CEP que o Hub tinha no início.
 
 Definições:
-  alterados pelo robô (automático)    robô gravou (status ok) e o CEP veio da lista dos Correios (status exato, aprox_exato...).
-  alterados pelo robô (decidido por você)  robô gravou (ok) e o CEP foi decidido por você (status conferido_manual: sugestões e escolhas).
-  alterados manualmente no Hub        feito = TRUE, CEP novo de rua, mas SEM registro do robô (você alterou à mão, ou marcou como feito).
+  alterados pelo robô                 robô gravou (status ok): inclui os CEPs achados pela lista e os decididos por você (conferido_manual).
+  alterados manualmente no Hub        você mudou o CEP direto no Hub, à mão: feito = TRUE, CEP novo de rua, mas SEM registro do robô.
   já certos                           o robô achou o Hub já certo (ja_atualizado) ou o Hub já tinha o CEP certo.
   genéricos mantidos                  continuam com 11700000/11730000/11740000/11750000: x, ruas encerradas, ruas sem CEP nas fontes.
   pendentes                           ainda na fila do robô ou pulados para revisão (bairro_longe e outros).
@@ -75,17 +74,17 @@ def main():
         else:
             c["pendentes_fila"] += 1
     n = c["precisavam"]
-    alterados = c["robo_automatico"] + c["robo_decidido_por_voce"] + c["manual_no_hub"]
+    pelo_robo = c["robo_automatico"] + c["robo_decidido_por_voce"]
+    alterados = pelo_robo + c["manual_no_hub"]
     print(f"{c['total']} total da planilha")
     print(f"{c['fora']} outras cidades (fora do escopo)")
     print(f"{c['tres_cidades']} serviços em Itanhaém, Mongaguá e Peruíbe, dos quais:")
     print(f"   {c['ja_tinham_cep_de_rua']} já tinham CEP de rua no Hub (nada a fazer)")
     print(f"   {n} precisavam de CEP de rua (CEP genérico no Hub)")
     print(f"\nDos {n} que precisavam:")
-    print(f"   {alterados:6d}  alterados (CEP de rua gravado)  [{100 * alterados / n:.1f}%]")
-    print(f"      {c['robo_automatico']:6d}  alterados pelo robô (CEP achado automaticamente)")
-    print(f"      {c['robo_decidido_por_voce']:6d}  alterados pelo robô com CEP decidido por você (sugestões validadas e escolhas)")
-    print(f"      {c['manual_no_hub']:6d}  alterados manualmente no Hub (feito, sem registro do robô)")
+    print(f"   {alterados:6d}  alterados (CEP de rua gravado no Hub)  [{100 * alterados / n:.1f}%]")
+    print(f"      {pelo_robo:6d}  alterados pelo robô  (dos quais {c['robo_decidido_por_voce']} com CEP decidido por você: sugestões validadas e escolhas)")
+    print(f"      {c['manual_no_hub']:6d}  alterados manualmente no Hub, à mão, sem o robô (feito sem registro do robô)")
     print(f"   {c['ja_certos']:6d}  já estavam certos (robô: ja_atualizado)")
     print(f"   {c['genericos_mantidos']:6d}  CEPs genéricos mantidos  [{100 * c['genericos_mantidos'] / n:.1f}%]")
     print(f"   {c['pendentes_pulados'] + c['pendentes_fila']:6d}  ainda pendentes (fila do robô {c['pendentes_fila']}, pulados para revisão {c['pendentes_pulados']})")
