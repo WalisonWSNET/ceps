@@ -175,6 +175,39 @@ def vizinhos(linha, idx_viz):
     return len(perto), Counter(perto)
 
 
+def indice_hub(linhas):
+    """(cidade, rua por som) -> [(coordenada, cep)] dos serviços em que o HUB já tem um CEP de rua (qualquer status): alguém já o escolheu."""
+    res = defaultdict(list)
+    for r in linhas:
+        cep = so_digitos(r.get("cep"))
+        if len(cep) == 8 and cep not in GENERICOS:
+            c = geo.coordenada(r.get("coordenadas"))
+            if c:
+                rua, _ = base.extrair_complemento(r.get("endereco", ""))
+                res[((r.get("cidade") or "").strip().upper(), base.fonetica(base.chave(base.separa_tipo(rua)[1])))].append((c, cep))
+    return res
+
+
+def vizinho_mais_perto(linha, idx_hub, ceps_ok):
+    """Entre os CEPs candidatos (`ceps_ok`), o do cliente mais próximo (na mesma rua) que já tem CEP de rua no Hub: só vale se ele está a até
+    150 m e o vizinho mais perto de OUTRO candidato está pelo menos 3x mais longe. Devolve (cep, metros) ou None."""
+    c = geo.coordenada(linha.get("coordenadas"))
+    if not c:
+        return None
+    rua, _ = base.extrair_complemento(linha.get("endereco", ""))
+    chave = ((linha.get("cidade") or "").strip().upper(), base.fonetica(base.chave(base.separa_tipo(rua)[1])))
+    por = {}
+    for cc, cep in idx_hub.get(chave, []):
+        if cep in ceps_ok:
+            por[cep] = min(por.get(cep, 1e9), geo.km(c, cc) * 1000)
+    if not por:
+        return None
+    ordem = sorted(por.items(), key=lambda t: t[1])
+    cep, d = ordem[0]
+    outro = ordem[1][1] if len(ordem) > 1 else 1e9
+    return (cep, d) if d <= 150 and outro >= max(3 * d, d + 60) else None
+
+
 def avaliar(linha, idx, fon, mapa):
     cidade = linha["cidade"].strip().upper()
     rua, compl = base.extrair_complemento(linha["endereco"])
@@ -284,6 +317,7 @@ def main():
     fon = montar_indices(idx)
     mapa = geo.MapaBairros(geo.centros_dos_bairros(linhas))
     idx_viz = indice_vizinhos(linhas)
+    idx_hub = indice_hub(linhas)
     por_cep = defaultdict(list)
     for _cid in idx.values():
         for _es in _cid.values():
@@ -335,6 +369,11 @@ def main():
         row.update({k: v for k, v in d.items() if k in CAMPOS})
         row["vizinhos_n"] = nviz or ""
         row["vizinhos_cep"] = " | ".join(f"{c} ({n})" for c, n in ceps_viz.most_common(3))
+        if not args.conflitos and not row["cep_proposto"] and row["alternativas"]:
+            ceps_ok = {so_digitos(a[:9]) for a in row["alternativas"].split(" | ")}
+            vm = vizinho_mais_perto(r, idx_hub, ceps_ok)
+            if vm:
+                row.update(cep_proposto=vm[0], metodo="vizinho_hub", confianca="media", motivo=f"vizinho_mais_proximo({vm[1]:.0f}m)")
         if args.conflitos:
             prop, n_cli = row["cep_proposto"], base.numero(r.get("numero"))
             if not prop or prop == cep_atual or row["confianca"] not in ("alta", "media"):
