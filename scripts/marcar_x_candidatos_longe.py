@@ -8,6 +8,7 @@ Depois, para ver só o que falta decidir, filtre a coluna `escolha` por "está v
 Uso:
   python scripts/marcar_x_candidatos_longe.py --planilha ID                    # simula (padrão: limite 1.5 km)
   python scripts/marcar_x_candidatos_longe.py --planilha ID --limite 1.0       # mais agressivo (marca mais linhas com x)
+  python scripts/marcar_x_candidatos_longe.py --planilha ID --empate 0.15     # também x onde dois candidatos empatam na distância
   python scripts/marcar_x_candidatos_longe.py --planilha ID --gravar           # grava (backup em logs/backup_x_longe_*.csv)
 """
 import argparse
@@ -31,6 +32,9 @@ def main():
     ap.add_argument("--aba")
     ap.add_argument("--coluna", default="escolha")
     ap.add_argument("--limite", type=float, default=1.5, help="km: se o candidato MAIS PERTO está a mais que isso, marca x (padrão 1.5)")
+    ap.add_argument("--empate", type=float, default=None, metavar="KM",
+                    help="marca x também quando os DOIS candidatos mais perto estão a distâncias que diferem menos que KM (ex.: 0.15): "
+                         "empate entre loteamentos, que nem o mapa costuma separar")
     ap.add_argument("--gravar", action="store_true")
     args = ap.parse_args()
 
@@ -63,8 +67,10 @@ def main():
             continue
         d = distancias(p)
         if d and min(d) <= args.limite:
-            ficam += 1
-            continue
+            ordem = sorted(d)
+            if not (args.empate is not None and len(ordem) >= 2 and ordem[1] - ordem[0] < args.empate):
+                ficam += 1
+                continue
         backup.append((valor(r, "id_cliente_servico"), args.coluna, "", "x"))
         mudancas.append({"range": rowcol_to_a1(n, col[args.coluna]), "values": [["x"]]})
     print(f"Linhas que recebem x (candidato mais perto a mais de {args.limite} km ou sem distância): {len(mudancas)} | ficam para você: {ficam}")
