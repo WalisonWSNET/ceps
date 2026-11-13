@@ -25,7 +25,7 @@ function Rodar-Etapa([string]$extra, [string]$ate, [datetime]$limite) {
     while ((Get-Date) -lt $limite -and $tent -lt 6) {
         $t0 = Get-Date
         Write-Host "[$(Get-Date -Format 'dd/MM HH:mm')] iniciando o robô (até $ate) $extra"
-        Invoke-Expression "python scripts/atualizar_ceps_hub.py $base $extra --ate $ate"
+        Invoke-Expression "python scripts/atualizar_ceps_hub.py $base $extra --ate $ate" | Out-Host  # Out-Host: sem isso a saída do robô vira o valor da função e some da tela
         $c = $LASTEXITCODE
         if ($c -notin 1, 3) { break }
         if (((Get-Date) - $t0).TotalMinutes -gt 30) { $tent = 0 } else { $tent++ }
