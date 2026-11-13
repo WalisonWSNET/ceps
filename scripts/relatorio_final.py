@@ -43,6 +43,7 @@ def main():
                 ultimo[r["id_cliente_servico"]] = r["status"]
 
     c = Counter()
+    manuais = []
     for r in linhas:
         c["total"] += 1
         cidade = (r.get("cidade") or "").strip().upper()
@@ -67,6 +68,7 @@ def main():
             c["ja_certos"] += 1
         elif feito and novo not in GENERICOS and novo:
             c["manual_no_hub"] += 1
+            manuais.append(r)
         elif novo in GENERICOS and (st in NAO_RESOLVIDOS or "rua_encerrada" in obs or feito):
             c["genericos_mantidos"] += 1
         elif robo and robo != "ok":
@@ -88,6 +90,16 @@ def main():
     print(f"   {c['ja_certos']:6d}  já estavam certos (robô: ja_atualizado)")
     print(f"   {c['genericos_mantidos']:6d}  CEPs genéricos mantidos  [{100 * c['genericos_mantidos'] / n:.1f}%]")
     print(f"   {c['pendentes_pulados'] + c['pendentes_fila']:6d}  ainda pendentes (fila do robô {c['pendentes_fila']}, pulados para revisão {c['pendentes_pulados']})")
+    if manuais:
+        Path("logs").mkdir(exist_ok=True)
+        with open("logs/alterados_manualmente.csv", "w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, ["id_cliente_servico", "codigo_cliente", "endereco", "numero", "bairro", "cidade", "cep", "cep_novo", "status_cep", "obs_robo"],
+                               extrasaction="ignore")
+            w.writeheader()
+            w.writerows(manuais)
+        por_status = Counter((r.get("status_cep") or "").strip() for r in manuais)
+        print("\nAlterados manualmente no Hub, por status_cep:", dict(por_status.most_common(8)))
+        print("   lista completa em logs/alterados_manualmente.csv")
     soma = alterados + c["ja_certos"] + c["genericos_mantidos"] + c["pendentes_pulados"] + c["pendentes_fila"]
     print(f"\nconferência: {soma} de {n}" + ("  OK" if soma == n else "  (diferença: confira)"))
 
