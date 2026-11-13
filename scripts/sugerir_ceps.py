@@ -50,7 +50,10 @@ def bairro_igual(a, b):
     ta, tb = _tok_bairro(a), _tok_bairro(b)
     if not (ta and tb):
         return False
-    return ta <= tb or tb <= ta or len(ta & tb) / len(ta | tb) >= 0.6
+    if ta <= tb or tb <= ta or len(ta & tb) / len(ta | tb) >= 0.6:
+        return True
+    ja, jb = "".join(sorted(ta)), "".join(sorted(tb))  # "Luiza Mar Mirim" = "Luizamar Mirim"; "Augusto" ~ "Augustus"
+    return len(ja) >= 7 and len(jb) >= 7 and difflib.SequenceMatcher(None, ja, jb).ratio() >= 0.8
 
 
 def montar_indices(idx):
