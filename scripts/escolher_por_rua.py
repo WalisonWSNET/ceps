@@ -8,6 +8,7 @@ Os nomes de --um casam por TRECHO do nome da rua (sem acento, maiúsculas): "VAT
 Uso:
   python scripts/escolher_por_rua.py --planilha ID --um "RICARDO LACERDA" "VATRAPUA" --resto-x            # simula
   python scripts/escolher_por_rua.py --planilha ID --um "RICARDO LACERDA" "VATRAPUA" --resto-x --gravar    # grava (backup em logs/backup_por_rua_*.csv)
+  python scripts/escolher_por_rua.py --planilha ID --um "JOAO CAPISTRANO" --sobrescrever-x                  # troca x por 1 nessas ruas
 """
 import argparse
 import csv
@@ -39,6 +40,8 @@ def main():
     ap.add_argument("--coluna", default="escolha")
     ap.add_argument("--um", nargs="*", default=[], help="trechos de nome de rua que recebem 1 (o 1º candidato)")
     ap.add_argument("--resto-x", action="store_true", help="todos os outros pendentes recebem x")
+    ap.add_argument("--sobrescrever-x", action="store_true",
+                    help="também troca um x JÁ escrito em `escolha` por 1, nas ruas de --um (para corrigir um x em lote)")
     ap.add_argument("--gravar", action="store_true")
     args = ap.parse_args()
     um = [norma_rua(x) for x in args.um if x.strip()]
@@ -67,10 +70,13 @@ def main():
             continue
         if valor(r, "status_cep").strip() not in STATUS_ALVO or valor(r, "feito").strip().upper() in VERDADEIRO:
             continue
-        if not valor(r, "ceps_candidatos").strip() or valor(r, args.coluna).strip():
+        atual = valor(r, args.coluna).strip().lower()
+        if not valor(r, "ceps_candidatos").strip() or (atual and not (args.sobrescrever_x and atual == "x")):
             continue
         rua = norma_rua(valor(r, "endereco"))
         achou = next((u for u in um if u in rua), None)
+        if atual == "x" and not achou:
+            continue  # com --sobrescrever-x só mexe nas ruas de --um
         if achou:
             novo = "1"
             casadas[achou] += 1
