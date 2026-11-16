@@ -5,6 +5,7 @@ Ideia: o `bairro_longe` costuma ser o bairro do Hub vago ou com outro nome, e n�
 serviços que já receberam o MESMO CEP novo (marcados `feito`, ou concluídos pelo robô) e mede a distância entre a coordenada do cliente e a
 desses vizinhos. Vizinho muito perto com o mesmo CEP = o CEP está fisicamente na área certa.
 
+  mesmo_bairro_outro_nome  o bairro do Hub e o do CEP novo são o MESMO nome, só escrito diferente ("Balneário Itaóca" e "Itaóca")
   confirmado_vizinhos   há um vizinho com o mesmo CEP a até 300 m
   provavel              há um vizinho com o mesmo CEP entre 300 m e 1 km
   vizinhos_longe        há vizinhos com o mesmo CEP, mas todos a mais de 1 km (o CEP pode estar errado para este cliente)
@@ -32,13 +33,27 @@ def d(s):
     return "".join(c for c in (s or "") if c.isdigit())
 
 
+GENERICAS = {"balneario", "balnearia", "jardim", "estancia", "cidade", "vila", "parque", "residencial", "chacaras", "chacara", "loteamento",
+             "conjunto", "interior", "praia", "de", "da", "do", "das", "dos", "e", "i", "ii", "iii"}
+
+
+def nucleo(nome):
+    """Palavras que identificam o bairro, sem os 'Balneário', 'Jardim', 'Estância'..."""
+    return {t for t in geo.tokens_b(nome or "") if t not in GENERICAS}
+
+
+def mesmo_bairro(a, b):
+    na, nb = nucleo(a), nucleo(b)
+    return bool(na and nb) and (na <= nb or nb <= na)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv")
     ap.add_argument("--log", default="logs/log_ceps.csv")
     ap.add_argument("--saida", default="logs/bairro_longe_analise.csv")
     ap.add_argument("--ids-saida", help="grava neste arquivo os id_cliente_servico das classes escolhidas em --classes (para o --ids-arquivo do robô)")
-    ap.add_argument("--classes", nargs="+", default=["confirmado_vizinhos"], help="classes a gravar em --ids-saida")
+    ap.add_argument("--classes", nargs="+", default=["mesmo_bairro_outro_nome", "confirmado_vizinhos", "provavel"], help="classes a gravar em --ids-saida")
     args = ap.parse_args()
 
     with open(args.csv, encoding="utf-8-sig", newline="") as f:
@@ -74,7 +89,9 @@ def main():
         viz = []
         if c:
             viz = sorted(geo.km(c, cc) * 1000 for j, cc in prontos.get(cep, []) if j != i)
-        if not c:
+        if antes and depois and mesmo_bairro(antes, depois):
+            classe = "mesmo_bairro_outro_nome"
+        elif not c:
             classe = "sem_coordenada"
         elif not viz:
             classe = "sem_evidencia"
@@ -97,14 +114,14 @@ def main():
         w.writerows(saida)
     total = len(saida)
     print(f"Serviços pulados por bairro_longe e ainda sem `feito`: {total}\n")
-    for k in ("confirmado_vizinhos", "provavel", "vizinhos_longe", "sem_evidencia", "sem_coordenada"):
+    for k in ("mesmo_bairro_outro_nome", "confirmado_vizinhos", "provavel", "vizinhos_longe", "sem_evidencia", "sem_coordenada"):
         print(f"   {cont[k]:5d}  {k}")
     print("\nPares 'bairro do Hub -> bairro do CEP novo' mais frequentes (n | confirmado+provável):")
     for (a, b), cc in sorted(pares.items(), key=lambda t: -sum(t[1].values()))[:15]:
         n = sum(cc.values())
-        print(f"   {n:4d} | {cc['confirmado_vizinhos'] + cc['provavel']:4d}  {a[:26]:26} -> {b[:26]}")
+        print(f"   {n:4d} | {cc['confirmado_vizinhos'] + cc['provavel'] + cc['mesmo_bairro_outro_nome']:4d}  {a[:26]:26} -> {b[:26]}")
     print("\nExemplos para você conferir no Hub (3 por classe; codigo_cliente):")
-    for k in ("confirmado_vizinhos", "provavel", "vizinhos_longe"):
+    for k in ("mesmo_bairro_outro_nome", "confirmado_vizinhos", "provavel", "vizinhos_longe"):
         ex = [x for x in saida if x["classe"] == k][:3]
         if ex:
             print(f"   {k}: " + ", ".join(f"{x['codigo_cliente']} ({x['endereco'][:22]} {x['numero']}, {x['vizinho_mais_perto_m'] or '?'} m)" for x in ex))
