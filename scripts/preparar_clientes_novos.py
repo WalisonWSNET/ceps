@@ -44,6 +44,8 @@ def main():
     ap.add_argument("novos", help="CSV exportado da aba nova (clientes novos)")
     ap.add_argument("--referencia", required=True, help="CSV mais recente da aba principal (cabeçalho e IDs já existentes)")
     ap.add_argument("--correios", default="data/ceps_logradouros.csv")
+    ap.add_argument("--col-endereco", default="endereco",
+                    help="nome da coluna que tem a RUA no CSV dos novos (ex.: servico, se o título da coluna estiver diferente)")
     ap.add_argument("--saida", default="data/clientes_novos_prontos.csv")
     ap.add_argument("--planilha")
     ap.add_argument("--credenciais", default="credenciais_google.json")
@@ -55,6 +57,15 @@ def main():
     cab_ref, ref = ler(args.referencia)
     ids_existentes = {so_digitos(r["id_cliente_servico"]) for r in ref}
     cab_novos, novos = ler(args.novos)
+    if args.col_endereco != "endereco":
+        if args.col_endereco not in cab_novos:
+            raise SystemExit(f"a coluna '{args.col_endereco}' não existe no CSV dos novos. Colunas: {cab_novos}")
+        for r in novos:
+            r["endereco"] = r[args.col_endereco]
+        if "endereco" not in cab_novos:
+            cab_novos = list(cab_novos) + ["endereco"]
+    amostra_ruas = [r["endereco"] for r in novos if r.get("endereco")][:3]
+    print(f"Coluna da rua: '{args.col_endereco}' | exemplos: {amostra_ruas}")
     faltam = [c for c in ("id_cliente_servico", "codigo_cliente", "endereco", "numero", "bairro", "cidade", "coordenadas", "cep") if c not in cab_novos]
     if faltam:
         raise SystemExit(f"o CSV dos novos não tem as colunas: {faltam}")
