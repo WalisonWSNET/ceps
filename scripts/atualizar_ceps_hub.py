@@ -1868,7 +1868,11 @@ def main(argv=None):
     ap.add_argument("--verificacao", choices=["card", "completa"], default="completa",
                     help="completa = reabre o endereço e confere número/complemento/referência")
     ap.add_argument("--continuar-no-erro", action="store_true", help="segue após erro inesperado (para após 3 seguidos)")
+    ap.add_argument("--ids-arquivo", metavar="ARQ", help="arquivo de texto com um id_cliente_servico por linha: soma-se a --id (útil para listas longas)")
     args = ap.parse_args(argv)
+    if args.ids_arquivo:
+        ids_do_arquivo = [re.sub(r"\D", "", ln) for ln in open(args.ids_arquivo, encoding="utf-8") if re.sub(r"\D", "", ln)]
+        args.id = list(dict.fromkeys((args.id or []) + ids_do_arquivo))
     if args.resumo:
         resumo(args)
         return
