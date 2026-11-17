@@ -825,7 +825,7 @@ def esperar_estabilizar(page, dialogo, minimo_ms=1000, maximo_ms=4000):
 def gravar_endereco(page):
     """Atualizar Todos + Salvar, sem esperas à toa. O resultado de verdade é conferido depois, consultando o cliente."""
     clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
-    page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for()
+    page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for(timeout=45000)
     # o aviso do serviço costuma aparecer junto com o dos endereços e sumir logo: olha já
     aviso_antes = False
     for _ in range(3):  # ~0,5 s
