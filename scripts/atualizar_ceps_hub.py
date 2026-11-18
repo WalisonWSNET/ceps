@@ -824,19 +824,34 @@ def esperar_estabilizar(page, dialogo, minimo_ms=1000, maximo_ms=4000):
 
 def corrigir_bairro_invalido(page, dialogo, campo_bairro, bairro):
     """O Hub recusou o bairro que veio do CEP novo (não cadastrado na cidade): coloca o bairro que o endereço já tinha
-    (digita e escolhe na lista do autocompletar). Devolve True se o campo ficou com esse bairro."""
+    (digita e escolhe na lista do autocompletar). Devolve (ok, info) com o que viu, para diagnóstico."""
     loc = dialogo.locator("input, textarea").nth(campo_bairro["i"])
     loc.click()
     loc.fill("")
-    loc.type(bairro, delay=40)
-    page.wait_for_timeout(1200)
-    opcoes = page.get_by_role("option").filter(has_text=re.compile("^\\s*" + re.escape(bairro) + "\\s*$", re.I)).filter(visible=True)
-    if opcoes.count() >= 1:
-        opcoes.first.click()
-    else:
+    loc.press_sequentially(bairro, delay=60)
+    page.wait_for_timeout(1500)
+    opcoes = page.locator("md-virtual-repeat-container li, md-autocomplete-parent-scope li, ul[role=listbox] li, [role=option]").filter(visible=True)
+    textos = [t.strip() for t in opcoes.all_inner_texts()][:8]
+    alvo = norm_campo(bairro)
+    escolhida = None
+    for k, t in enumerate(textos):
+        if norm_campo(t) == alvo:
+            escolhida = k
+            break
+    if escolhida is None:
+        for k, t in enumerate(textos):
+            if alvo in norm_campo(t):
+                escolhida = k
+                break
+    if escolhida is not None:
+        opcoes.nth(escolhida).click()
+    elif textos:
+        loc.press("ArrowDown")
         loc.press("Enter")
-    page.wait_for_timeout(600)
-    return norm_campo(loc.input_value()) == norm_campo(bairro)
+    page.wait_for_timeout(700)
+    valor = loc.input_value()
+    ok = norm_campo(valor) == alvo
+    return ok, {"original": bairro, "campo_depois": valor, "opcoes": textos}
 
 
 def gravar_endereco(page, dialogo=None, campo_bairro=None, bairro_original=None):
@@ -864,8 +879,11 @@ def gravar_endereco(page, dialogo=None, campo_bairro=None, bairro_original=None)
         if visto_end:
             break
         if bairro_recusado:
-            if corrigido or dialogo is None or not bairro_original or not corrigir_bairro_invalido(page, dialogo, campo_bairro, bairro_original):
-                raise ErroPulavel("bairro_invalido_no_hub: " + bairro_recusado.replace("\n", " "))
+            if corrigido or dialogo is None or not bairro_original:
+                raise ErroPulavel("bairro_invalido_no_hub: " + bairro_recusado.replace("\n", " ")[:120])
+            ok_b, info_b = corrigir_bairro_invalido(page, dialogo, campo_bairro, bairro_original)
+            if not ok_b:
+                raise ErroPulavel("bairro_invalido_no_hub_correcao_falhou: " + json.dumps(info_b, ensure_ascii=False)[:400])
             corrigido = True
     if not visto_end:
         raise ErroPulavel("aviso_atualizar_todos_nao_apareceu")
