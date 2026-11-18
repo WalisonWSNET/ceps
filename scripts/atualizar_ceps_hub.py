@@ -824,8 +824,24 @@ def esperar_estabilizar(page, dialogo, minimo_ms=1000, maximo_ms=4000):
 
 def gravar_endereco(page):
     """Atualizar Todos + Salvar, sem esperas à toa. O resultado de verdade é conferido depois, consultando o cliente."""
-    clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
-    page.get_by_text(re.compile("Todos os endereços atualizados com sucesso")).wait_for(timeout=45000)
+    # o aviso pode ser rápido demais para o Playwright ver: um observador no navegador anota se o texto chegou a aparecer
+    js_obs = """() => { window.__aviso_end = false; if (window.__obs_end) window.__obs_end.disconnect();
+        window.__obs_end = new MutationObserver(() => { if (/Todos os endereços atualizados com sucesso/i.test(document.body.innerText)) window.__aviso_end = true; });
+        window.__obs_end.observe(document.body, {subtree: true, childList: true, characterData: true}); }"""
+    for tentativa in (1, 2):
+        page.evaluate(js_obs)
+        clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
+        t0 = time.time()
+        visto_end = False
+        while time.time() - t0 < (20 if tentativa == 1 else 30):
+            if page.evaluate("() => window.__aviso_end") or aviso_visivel(page, "Todos os endereços atualizados com sucesso"):
+                visto_end = True
+                break
+            page.wait_for_timeout(250)
+        if visto_end:
+            break
+    if not visto_end:
+        raise ErroPulavel("aviso_atualizar_todos_nao_apareceu")
     # o aviso do serviço costuma aparecer junto com o dos endereços e sumir logo: olha já
     aviso_antes = False
     for _ in range(3):  # ~0,5 s
