@@ -850,7 +850,7 @@ def corrigir_bairro_invalido(page, dialogo, campo_bairro, bairro):
         loc.press("Enter")
     page.wait_for_timeout(700)
     valor = loc.input_value()
-    ok = norm_campo(valor) == alvo
+    ok = bool(alvo) and alvo in norm_campo(valor)  # o Hub escolhe o nome cadastrado (ex.: "ITAGUAÍ" -> "BALNEÁRIO ITAGUAÍ")
     return ok, {"original": bairro, "campo_depois": valor, "opcoes": textos}
 
 
