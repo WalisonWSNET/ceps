@@ -885,6 +885,10 @@ def gravar_endereco(page, dialogo=None, campo_bairro=None, bairro_original=None)
             if not ok_b:
                 raise ErroPulavel("bairro_invalido_no_hub_correcao_falhou: " + json.dumps(info_b, ensure_ascii=False)[:400])
             corrigido = True
+            for _ in range(60):  # o aviso vermelho antigo ainda está na tela: espera sumir, para não confundir com um novo
+                if not page.get_by_text(re.compile(r"não é um bairro válido", re.I)).filter(visible=True).count():
+                    break
+                page.wait_for_timeout(250)
     if not visto_end:
         raise ErroPulavel("aviso_atualizar_todos_nao_apareceu")
     BAIRRO_CORRIGIDO[0] = bairro_original if corrigido else None
