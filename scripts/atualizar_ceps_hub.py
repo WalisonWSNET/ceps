@@ -822,26 +822,54 @@ def esperar_estabilizar(page, dialogo, minimo_ms=1000, maximo_ms=4000):
             return
 
 
-def gravar_endereco(page):
+def corrigir_bairro_invalido(page, dialogo, campo_bairro, bairro):
+    """O Hub recusou o bairro que veio do CEP novo (não cadastrado na cidade): coloca o bairro que o endereço já tinha
+    (digita e escolhe na lista do autocompletar). Devolve True se o campo ficou com esse bairro."""
+    loc = dialogo.locator("input, textarea").nth(campo_bairro["i"])
+    loc.click()
+    loc.fill("")
+    loc.type(bairro, delay=40)
+    page.wait_for_timeout(1200)
+    opcoes = page.get_by_role("option").filter(has_text=re.compile("^\\s*" + re.escape(bairro) + "\\s*$", re.I)).filter(visible=True)
+    if opcoes.count() >= 1:
+        opcoes.first.click()
+    else:
+        loc.press("Enter")
+    page.wait_for_timeout(600)
+    return norm_campo(loc.input_value()) == norm_campo(bairro)
+
+
+def gravar_endereco(page, dialogo=None, campo_bairro=None, bairro_original=None):
     """Atualizar Todos + Salvar, sem esperas à toa. O resultado de verdade é conferido depois, consultando o cliente."""
     # o aviso pode ser rápido demais para o Playwright ver: um observador no navegador anota se o texto chegou a aparecer
     js_obs = """() => { window.__aviso_end = false; if (window.__obs_end) window.__obs_end.disconnect();
         window.__obs_end = new MutationObserver(() => { if (/Todos os endereços atualizados com sucesso/i.test(document.body.innerText)) window.__aviso_end = true; });
         window.__obs_end.observe(document.body, {subtree: true, childList: true, characterData: true}); }"""
-    for tentativa in (1, 2):
+    corrigido = False
+    for tentativa in (1, 2, 3):
         page.evaluate(js_obs)
         clicar_texto(page, r"^\s*Atualizar\s+Todos\s*$", "atualizar_todos")
         t0 = time.time()
         visto_end = False
+        bairro_recusado = None
         while time.time() - t0 < (20 if tentativa == 1 else 30):
             if page.evaluate("() => window.__aviso_end") or aviso_visivel(page, "Todos os endereços atualizados com sucesso"):
                 visto_end = True
                 break
+            m = page.get_by_text(re.compile(r"bairro de nome .*não é um bairro válido", re.I)).filter(visible=True)
+            if m.count():
+                bairro_recusado = m.first.inner_text()[:200]
+                break
             page.wait_for_timeout(250)
         if visto_end:
             break
+        if bairro_recusado:
+            if corrigido or dialogo is None or not bairro_original or not corrigir_bairro_invalido(page, dialogo, campo_bairro, bairro_original):
+                raise ErroPulavel("bairro_invalido_no_hub: " + bairro_recusado.replace("\n", " "))
+            corrigido = True
     if not visto_end:
         raise ErroPulavel("aviso_atualizar_todos_nao_apareceu")
+    BAIRRO_CORRIGIDO[0] = bairro_original if corrigido else None
     # o aviso do serviço costuma aparecer junto com o dos endereços e sumir logo: olha já
     aviso_antes = False
     for _ in range(3):  # ~0,5 s
@@ -1232,7 +1260,9 @@ def processar(page, linha, args, tela):
         page.screenshot(path=str(tela / f"{idcs}_simulacao.png"))
         return "simulado_ok", detalhes  # nada foi gravado; a navegação seguinte descarta o formulário
 
-    detalhes["avisos"] = gravar_endereco(page)
+    detalhes["avisos"] = gravar_endereco(page, dialogo, mapa.get("bairro"), mapa["bairro"]["valor"].strip() if mapa.get("bairro") else None)
+    if BAIRRO_CORRIGIDO[0]:
+        detalhes["bairro_recolocado"] = BAIRRO_CORRIGIDO[0]
     marca("gravar")
 
     # verificação: consulta o cliente de novo (navega do zero) e relê o cartão e (opcional) o endereço
@@ -1254,6 +1284,7 @@ def processar(page, linha, args, tela):
     return "ok", detalhes
 
 
+BAIRRO_CORRIGIDO = [None]  # bairro que o robô precisou recolocar (o Hub recusou o do CEP novo)
 SINAL = [time.time()]  # último sinal de vida do laço principal (o vigia abaixo confere)
 FIM = [False]  # o laço terminou: o vigia não deve mais reiniciar o robô
 
