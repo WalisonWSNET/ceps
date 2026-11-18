@@ -1073,6 +1073,11 @@ def editar_um_endereco(page, linha, args, tipo, cep_lista, novo, detalhes):
     n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
     if n_hub != n_plan and not args.preservar_enderecos:  # com --preservar-enderecos cada endereço mantém o SEU número
         return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero"), "endereco": tipo}
+    if n_hub != n_plan and args.preservar_enderecos and args.por_cep and not cep_valido_para_endereco(
+            args.por_cep, novo, mapa["logradouro"]["valor"], mapa["numero"]["valor"]):
+        # outro número na mesma rua pode ter OUTRO CEP (faixas): só muda se a lista dos Correios confirma o CEP para este número
+        return "cep_nao_serve_para_este_numero", {"endereco": tipo, "numero_hub": mapa["numero"]["valor"],
+                                                  "rua_hub": mapa["logradouro"]["valor"], "cep_novo": novo}
     auto = {c["rotulo"]: c["valor"].strip() for c in campos if c["tipo"] == "search" and not derivado(c) and c["valor"].strip()}
     if auto and not args.preservar_enderecos:
         return "campo_autocompletar_preenchido", dict(auto, endereco=tipo)
