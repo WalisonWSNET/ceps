@@ -1071,12 +1071,16 @@ def editar_um_endereco(page, linha, args, tipo, cep_lista, novo, detalhes):
     if so_digitos(mapa["cep"]["valor"]) != cep_lista:
         return "cep_formulario_divergente", {"cep_formulario": mapa["cep"]["valor"], "cep_lista": cep_lista, "endereco": tipo}
     n_hub, n_plan = so_digitos(mapa["numero"]["valor"]), so_digitos(linha.get("numero"))
-    if n_hub != n_plan:
+    if n_hub != n_plan and not args.preservar_enderecos:  # com --preservar-enderecos cada endereço mantém o SEU número
         return "numero_divergente", {"numero_hub": mapa["numero"]["valor"], "numero_planilha": linha.get("numero"), "endereco": tipo}
     auto = {c["rotulo"]: c["valor"].strip() for c in campos if c["tipo"] == "search" and not derivado(c) and c["valor"].strip()}
-    if auto:
+    if auto and not args.preservar_enderecos:
         return "campo_autocompletar_preenchido", dict(auto, endereco=tipo)
     guardar, antes, depois, final = trocar_cep(page, dialogo, campos, mapa, novo)
+    if auto:  # Condomínio (autocompletar): só segue se o Hub NÃO mexeu nele ao trocar o CEP (o robô não sabe escolher na lista)
+        agora = {c["rotulo"]: c["valor"].strip() for c in ler_campos(dialogo) if c["rotulo"] in auto}
+        if {k: norm_campo(v) for k, v in agora.items()} != {k: norm_campo(v) for k, v in auto.items()}:
+            return "campo_autocompletar_perdido", {"antes": auto, "depois": agora, "endereco": tipo}
     atual = mapear(ler_campos(dialogo))
     motivo, info_div = avaliar_divergencia(
         {k: mapa[k]["valor"] for k in ("logradouro", "bairro", "cidade") if k in mapa},
@@ -1087,7 +1091,8 @@ def editar_um_endereco(page, linha, args, tipo, cep_lista, novo, detalhes):
     esp = esperados_do_formulario(guardar, None)
     recolocados = garantir_formulario(page, dialogo, esp)
     detalhes.setdefault("alterados", {})[tipo] = {"antes": antes, "final": final, "rua_bairro": info_div,
-                                                   "recolocados": recolocados, "esperado": {k: mapa[k]["valor"] for k in ("numero", "complemento", "referencia") if k in mapa}}
+                                                   "recolocados": recolocados, "esperado": {k: mapa[k]["valor"] for k in ("numero", "complemento", "referencia") if k in mapa},
+                                                   "auto": auto}
     if not args.gravar:
         return None
     clicar_salvar_do_painel(page, dialogo)  # só este endereço (sem "Atualizar Todos")
@@ -1145,6 +1150,12 @@ def processar_um_endereco(page, linha, args, tela, cartao):
         dialogo2 = abrir_linha_do_tipo(page, tipo)
         esperar_estabilizar(page, dialogo2, minimo_ms=800)
         m2 = mapear(ler_campos(dialogo2))
+        if info.get("auto"):
+            lidos2 = {c["rotulo"]: c["valor"].strip() for c in ler_campos(dialogo2)}
+            for rot, valor in info["auto"].items():
+                if norm_campo(lidos2.get(rot, "")) != norm_campo(valor):
+                    raise ErroPulavel("verificacao_condominio_nao_confere:" + json.dumps(
+                        {"endereco": tipo, "esperado": valor, "achado": lidos2.get(rot, ""), "antes": info["antes"]}, ensure_ascii=False)[:1500])
         for chave, valor in info["esperado"].items():
             e, a = norm_campo(valor), norm_campo(m2.get(chave, {}).get("valor", ""))
             if e != a:
@@ -1537,6 +1548,8 @@ def executar(args):
     args.bairros = construir_bairros(todas)
     if args.aceitar_bairro and not args.id:
         raise SystemExit("--aceitar-bairro exige --id (use só para os clientes que você já revisou)")
+    if args.preservar_enderecos:
+        args.so_um_endereco = True
     if args.so_um_endereco and not args.id:
         raise SystemExit("--so-um-endereco exige --id (use um serviço de cada vez e confira o resultado no Hub)")
     args.por_cep = carregar_por_cep(args.ceps_ref)
@@ -1908,6 +1921,9 @@ def main(argv=None):
     ap.add_argument("--so-um-endereco", action="store_true",
                     help="muda só o endereço de uma das 3 cidades (Instalação > Cadastral > Cobrança > Fiscal) e salva com 'Salvar', "
                          "sem 'Atualizar Todos'. Exige --id (para clientes com endereços de outra cidade, ex.: Barueri)")
+    ap.add_argument("--preservar-enderecos", action="store_true",
+                    help="com --so-um-endereco: muda o CEP de cada endereço das 3 cidades preservando o que ele tem (número diferente "
+                         "entre os endereços, Condomínio preenchido). Se o Hub apagar o Condomínio, esse endereço fica como está")
     ap.add_argument("--ceps-ref", default="data/ceps_logradouros.csv",
                     help="lista dos Correios (para a faixa de numeração e o bairro de cada CEP)")
     ap.add_argument("--travado-min", type=int, default=8, metavar="MIN",
