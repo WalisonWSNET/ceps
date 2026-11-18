@@ -1775,6 +1775,8 @@ def executar(args):
                     print("   endereços a alterar:", det.get("enderecos_a_alterar"), "| CEPs antes:", det.get("lista_antes"))
             if status in CONCLUIDOS:
                 alarmes = sem_feito = 0
+            elif args.refazer_pulados and (status in PULADOS or status.startswith(("enderecos_diferentes", "enderecos_conflito"))):
+                pass  # no --refazer-pulados a maioria volta pulada pelo mesmo motivo real: isso não é sinal de problema
             else:
                 sem_feito += 1
                 alarmes = alarmes + 1 if status.startswith(ALARMES) else alarmes
