@@ -158,6 +158,15 @@ def carregar_pulados():
     return {i for i, st in ultimo.items() if st in PULADOS or st.startswith(("enderecos_diferentes", "enderecos_conflito", "verificacao_"))}
 
 
+def ids_tentados_desde(desde):
+    """id_cliente_servico com alguma linha no log a partir de 'AAAA-MM-DD HH:MM' (retomar um --refazer-pulados interrompido)."""
+    corte = datetime.fromisoformat(desde.replace(" ", "T"))
+    if not LOG_GRAVACAO.exists():
+        return set()
+    with open(LOG_GRAVACAO, encoding="utf-8", newline="") as f:
+        return {r["id_cliente_servico"] for r in csv.DictReader(f) if datetime.fromisoformat(r["data_hora"]) >= corte}
+
+
 def registrar(arquivo, linha, status, detalhes=None):
     LOGS.mkdir(exist_ok=True)
     novo = not arquivo.exists()
@@ -1605,6 +1614,9 @@ def executar(args):
                   f"(lista em logs\\multi_servico_para_revisar.csv; tirar --excluir-multi-servico para incluir)")
     feitos = carregar_feitos()
     pulados = set() if (args.refazer_pulados or args.id) else carregar_pulados()
+    if args.refazer_pulados and args.refazer_desde:  # retomada: não repete o que já foi tentado nesta rodada
+        pulados = ids_tentados_desde(args.refazer_desde)
+        print(f"--refazer-desde: {len(pulados)} serviços já tentados desde {args.refazer_desde} ficam de fora")
     verdes = set()
     if args.planilha and not args.incluir_verdes and not args.conferir_marcados and not args.id:
         try:
@@ -1928,6 +1940,8 @@ def main(argv=None):
     ap.add_argument("--so-um-endereco", action="store_true",
                     help="muda só o endereço de uma das 3 cidades (Instalação > Cadastral > Cobrança > Fiscal) e salva com 'Salvar', "
                          "sem 'Atualizar Todos'. Exige --id (para clientes com endereços de outra cidade, ex.: Barueri)")
+    ap.add_argument("--refazer-desde", metavar="'AAAA-MM-DD HH:MM'",
+                    help="com --refazer-pulados: pula os serviços já tentados desde esta data/hora (para retomar a mesma rodada interrompida)")
     ap.add_argument("--preservar-enderecos", action="store_true",
                     help="com --so-um-endereco: muda o CEP de cada endereço das 3 cidades preservando o que ele tem (número diferente "
                          "entre os endereços, Condomínio preenchido). Se o Hub apagar o Condomínio, esse endereço fica como está")
