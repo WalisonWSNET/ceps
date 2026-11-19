@@ -3,14 +3,15 @@
   (funciona com CSV do Excel (;) e do Google Planilhas (,); o nome do arquivo pode ser qualquer um que contenha 'cep_divergente' ou não)
 decisao:  S = trocar o CEP (enderecos_diferentes: dos 4 endereços; cep_divergente: o CEP que está no Hub pelo CEP novo)
           I = trocar só o endereço de Instalação (--so-instalacao)
+          F = o Hub já está certo (endereço/CEP atualizados na mão): só marcar como feito (scripts/marcar_feito_ids.py)
           vazio / qualquer outra coisa = deixar como está
-Gera logs/ids_decisao_S.txt, logs/ids_decisao_I.txt e logs/ids_decisao_cep.txt (S do arquivo cep_divergente).
+Gera logs/ids_decisao_S.txt, _I.txt, _cep.txt (S do arquivo cep_divergente) e _F.txt.
 """
 import csv
 import sys
 from pathlib import Path
 
-S, I, C = [], [], []
+S, I, C, F = [], [], [], []
 for arq in sys.argv[1:]:
     texto = Path(arq).read_text(encoding="utf-8-sig")
     delim = ";" if texto.splitlines()[0].count(";") > texto.splitlines()[0].count(",") else ","
@@ -21,6 +22,8 @@ for arq in sys.argv[1:]:
             (C if eh_cep else S).append(r["id_cliente_servico"].strip())
         elif d == "I":
             I.append(r["id_cliente_servico"].strip())
-for nome, lista in (("S", S), ("I", I), ("cep", C)):
+        elif d == "F":
+            F.append(r["id_cliente_servico"].strip())
+for nome, lista in (("S", S), ("I", I), ("cep", C), ("F", F)):
     Path(f"logs/ids_decisao_{nome}.txt").write_text("\n".join(lista) + ("\n" if lista else ""), encoding="utf-8")
-print(f"S (4 endereços): {len(S)} | I (só Instalação): {len(I)} | cep_divergente trocar pelo novo: {len(C)} | o resto fica como está")
+print(f"S (4 endereços): {len(S)} | I (só Instalação): {len(I)} | cep_divergente trocar pelo novo: {len(C)} | já certos no Hub (F): {len(F)} | o resto fica como está")
