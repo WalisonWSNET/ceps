@@ -1125,6 +1125,8 @@ def processar_um_endereco(page, linha, args, tela, cartao):
     novo = so_digitos(linha["cep_novo"])
     lista = linhas_de_endereco(page)
     alvos = enderecos_alvo(lista)
+    if args.so_instalacao:  # só o endereço de Instalação (os outros ficam como estão)
+        alvos = [t for t in alvos if norm_txt(t).startswith("instalacao")]
     if not alvos:
         raise ErroPulavel("nenhum_endereco_da_regiao")
     pendentes = [t for t in alvos if lista[t][0] != novo]
@@ -1562,7 +1564,7 @@ def executar(args):
     args.bairros = construir_bairros(todas)
     if args.aceitar_bairro and not args.id:
         raise SystemExit("--aceitar-bairro exige --id (use só para os clientes que você já revisou)")
-    if args.preservar_enderecos:
+    if args.preservar_enderecos or args.so_instalacao:
         args.so_um_endereco = True
     if args.so_um_endereco and not args.id:
         raise SystemExit("--so-um-endereco exige --id (use um serviço de cada vez e confira o resultado no Hub)")
@@ -1942,6 +1944,8 @@ def main(argv=None):
                          "sem 'Atualizar Todos'. Exige --id (para clientes com endereços de outra cidade, ex.: Barueri)")
     ap.add_argument("--refazer-desde", metavar="'AAAA-MM-DD HH:MM'",
                     help="com --refazer-pulados: pula os serviços já tentados desde esta data/hora (para retomar a mesma rodada interrompida)")
+    ap.add_argument("--so-instalacao", action="store_true",
+                    help="com --so-um-endereco: muda só o endereço de Instalação (Cadastral, Cobrança e Fiscal ficam como estão)")
     ap.add_argument("--preservar-enderecos", action="store_true",
                     help="com --so-um-endereco: muda o CEP de cada endereço das 3 cidades preservando o que ele tem (número diferente "
                          "entre os endereços, Condomínio preenchido). Se o Hub apagar o Condomínio, esse endereço fica como está")
